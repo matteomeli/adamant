@@ -24,9 +24,45 @@ bitflags! {
 }
 
 pub fn init_d3d12(flags: InitFlags) {
-    let mut dxgi_factory_flags = 0;
-
     // Enable debug layer
+    let factory_flags = enable_debug_layer();
+
+    // Create DXGI factory
+    let factory = create_factory(factory_flags);
+
+    // Determine if tearing is supported for fullscreen borderless windows
+    let mut _allow_tearing = false;
+    if flags.contains(InitFlags::ALLOW_TEARING) {
+        trace!("Checking variable refresh rate display support");
+        unsafe {
+            if let Ok(factory5) = factory.cast::<dxgi1_5::IDXGIFactory5>() {
+                let mut allow_tearing_feature = minwindef::FALSE;
+                let hr = factory5.CheckFeatureSupport(
+                    dxgi1_5::DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+                    &mut allow_tearing_feature as *mut _ as *mut _,
+                    mem::size_of::<minwindef::BOOL>() as _,
+                );
+                if SUCCEEDED(hr) && allow_tearing_feature == minwindef::TRUE {
+                    _allow_tearing = true;
+                }
+            }
+        }
+        if _allow_tearing {
+            info!("Variable refresh rate displays supported");
+        } else {
+            warn!("Variable refresh rate displays not supported");
+        }
+    }
+
+    // Get adapter
+    let adapter = get_adapter(&factory);
+
+    // Create D3D12 API device
+    let _device = create_device(&adapter);
+}
+
+fn enable_debug_layer() -> u32 {
+    let mut dxgi_factory_flags = 0;
     #[cfg(debug_assertions)]
     {
         trace!("Enabling D3D12 debug device");
@@ -81,13 +117,15 @@ pub fn init_d3d12(flags: InitFlags) {
             }
         }
     }
+    dxgi_factory_flags
+}
 
-    // Create DXGI factory
+fn create_factory(flags: u32) -> ComPtr<dxgi1_4::IDXGIFactory4> {
     trace!("Creating DXGI factory");
     let mut factory = ComPtr::<dxgi1_4::IDXGIFactory4>::null();
     unsafe {
         if SUCCEEDED(dxgi1_3::CreateDXGIFactory2(
-            dxgi_factory_flags,
+            flags,
             &dxgi1_4::IDXGIFactory4::uuidof(),
             factory.as_mut_void(),
         )) {
@@ -97,67 +135,11 @@ pub fn init_d3d12(flags: InitFlags) {
             panic!();
         }
     }
-
-    // Determine if tearing is supported for fullscreen borderless windows
-    let mut _allow_tearing = false;
-    if flags.contains(InitFlags::ALLOW_TEARING) {
-        trace!("Checking variable refresh rate display support");
-        unsafe {
-            if let Ok(factory5) = factory.cast::<dxgi1_5::IDXGIFactory5>() {
-                let mut allow_tearing_feature = minwindef::FALSE;
-                let hr = factory5.CheckFeatureSupport(
-                    dxgi1_5::DXGI_FEATURE_PRESENT_ALLOW_TEARING,
-                    &mut allow_tearing_feature as *mut _ as *mut _,
-                    mem::size_of::<minwindef::BOOL>() as _,
-                );
-                if SUCCEEDED(hr) && allow_tearing_feature == minwindef::TRUE {
-                    _allow_tearing = true;
-                }
-            }
-        }
-        if _allow_tearing {
-            info!("Variable refresh rate displays supported");
-        } else {
-            warn!("Variable refresh rate displays not supported");
-        }
-    }
-
-    // Get adapter
-    trace!("Searching for D3D12 adapter");
-    let adapter = get_adapter(&factory);
-    unsafe {
-        let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
-        let hr = adapter.GetDesc1(&mut desc);
-        if FAILED(hr) {
-            error!("Failed to get adapter description");
-            panic!();
-        }
-        let device_name = {
-            let len = desc.Description.iter().take_while(|&&c| c != 0).count();
-            let name = <OsString as OsStringExt>::from_wide(&desc.Description[..len]);
-            name.to_string_lossy().into_owned()
-        };
-        info!(
-            "Found D3D12 adapter '{}' with {}MB of dedicated video memory",
-            device_name,
-            desc.DedicatedVideoMemory / 1000 / 1000
-        );
-    }
-
-    // Create D3D12 API device
-    trace!("Creating D3D12 device");
-    let device = create_device(&adapter);
-    unsafe {
-        device.SetName(
-            "AdamantDevice"
-                .encode_utf16()
-                .collect::<Vec<u16>>()
-                .as_ptr(),
-        );
-    }
+    factory
 }
 
 fn get_adapter(factory: &ComPtr<dxgi1_4::IDXGIFactory4>) -> ComPtr<dxgi::IDXGIAdapter1> {
+    trace!("Searching for D3D12 adapter");
     let mut adapter = ComPtr::<dxgi::IDXGIAdapter1>::null();
     unsafe {
         // Pretty much all unsafe here
@@ -245,10 +227,30 @@ fn get_adapter(factory: &ComPtr<dxgi1_4::IDXGIFactory4>) -> ComPtr<dxgi::IDXGIAd
         error!("No D3D12 adapter found");
         panic!();
     }
+
+    unsafe {
+        let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
+        let hr = adapter.GetDesc1(&mut desc);
+        if FAILED(hr) {
+            error!("Failed to get adapter description");
+            panic!();
+        }
+        let device_name = {
+            let len = desc.Description.iter().take_while(|&&c| c != 0).count();
+            let name = <OsString as OsStringExt>::from_wide(&desc.Description[..len]);
+            name.to_string_lossy().into_owned()
+        };
+        info!(
+            "Found D3D12 adapter '{}' with {}MB of dedicated video memory",
+            device_name,
+            desc.DedicatedVideoMemory / 1000 / 1000
+        );
+    }
     adapter
 }
 
 fn create_device(adapter: &ComPtr<dxgi::IDXGIAdapter1>) -> ComPtr<d3d12::ID3D12Device> {
+    trace!("Creating D3D12 device");
     let mut device = ComPtr::<d3d12::ID3D12Device>::null();
     unsafe {
         if SUCCEEDED(d3d12::D3D12CreateDevice(
@@ -262,6 +264,13 @@ fn create_device(adapter: &ComPtr<dxgi::IDXGIAdapter1>) -> ComPtr<d3d12::ID3D12D
             error!("Failed to create D3D12 device");
             panic!();
         }
+
+        device.SetName(
+            "AdamantDevice"
+                .encode_utf16()
+                .collect::<Vec<u16>>()
+                .as_ptr(),
+        );
     }
     device
 }
