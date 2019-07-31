@@ -49,7 +49,7 @@ impl<T> ComPtr<T>
 where
     T: Interface,
 {
-    pub fn up<U>(self) -> ComPtr<U>
+    pub fn into<U>(self) -> ComPtr<U>
     where
         U: Interface,
     {

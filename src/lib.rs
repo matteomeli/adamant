@@ -6,8 +6,8 @@ use bitflags::bitflags;
 
 use log::{error, info, trace, warn};
 
-use winapi::shared::winerror::SUCCEEDED;
-use winapi::shared::{dxgi, dxgi1_3, dxgi1_4, dxgi1_5, dxgi1_6, minwindef, winerror};
+use winapi::shared::winerror::{FAILED, SUCCEEDED};
+use winapi::shared::{dxgi, dxgi1_3, dxgi1_4, dxgi1_5, dxgi1_6, minwindef};
 use winapi::um::{d3d12, d3d12sdklayers, d3dcommon, dxgidebug};
 use winapi::Interface;
 
@@ -31,56 +31,38 @@ pub fn init_d3d12(flags: InitFlags) {
     {
         trace!("Enabling Direct3D debug device");
         let mut debug_controller = ComPtr::<d3d12sdklayers::ID3D12Debug>::null();
-        let hr = unsafe {
-            d3d12::D3D12GetDebugInterface(
+        unsafe {
+            if SUCCEEDED(d3d12::D3D12GetDebugInterface(
                 &d3d12sdklayers::ID3D12Debug::uuidof(),
                 debug_controller.as_mut_void(),
-            )
-        };
-        if SUCCEEDED(hr) {
-            info!("Direct3D debug device enabled");
-            unsafe {
+            )) {
+                info!("Direct3D debug device enabled");
                 debug_controller.EnableDebugLayer();
+            } else {
+                warn!("Direct3D debug device is not available");
             }
-        } else {
-            warn!("Direct3D debug device is not available: {}", hr);
         }
 
         trace!("Enabling DXGI info queue");
         let mut info_queue = ComPtr::<dxgidebug::IDXGIInfoQueue>::null();
-        let hr = unsafe {
-            dxgi1_3::DXGIGetDebugInterface1(
+        unsafe {
+            if SUCCEEDED(dxgi1_3::DXGIGetDebugInterface1(
                 0,
                 &dxgidebug::IDXGIInfoQueue::uuidof(),
                 info_queue.as_mut_void(),
-            )
-        };
-        if SUCCEEDED(hr) {
-            info!("DXGI info queue enabled");
-            dxgi_factory_flags = dxgi1_3::DXGI_CREATE_FACTORY_DEBUG;
-            unsafe {
-                let hr = info_queue.SetBreakOnSeverity(
+            )) {
+                info!("DXGI info queue enabled");
+                dxgi_factory_flags = dxgi1_3::DXGI_CREATE_FACTORY_DEBUG;
+                info_queue.SetBreakOnSeverity(
                     dxgidebug::DXGI_DEBUG_ALL,
                     dxgidebug::DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION,
                     minwindef::TRUE,
                 );
-                if !SUCCEEDED(hr) {
-                    warn!(
-                        "Failed to set break on severity 'corruption' to DXGI info queue: {}",
-                        hr
-                    );
-                }
-                let hr = info_queue.SetBreakOnSeverity(
+                info_queue.SetBreakOnSeverity(
                     dxgidebug::DXGI_DEBUG_ALL,
                     dxgidebug::DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR,
                     minwindef::TRUE,
                 );
-                if !SUCCEEDED(hr) {
-                    warn!(
-                        "Failed to set break on severity 'error' to DXGI info queue: {}",
-                        hr
-                    );
-                }
 
                 let mut hide: Vec<dxgidebug::DXGI_INFO_QUEUE_MESSAGE_ID> = vec![
                     80, // IDXGISwapChain::GetContainingOutput: The swapchain's adapter does not control the output on which the swapchain's window resides.
@@ -93,35 +75,31 @@ pub fn init_d3d12(flags: InitFlags) {
                     },
                     ..mem::zeroed()
                 };
-                let hr = info_queue.AddStorageFilterEntries(dxgidebug::DXGI_DEBUG_DXGI, &filter);
-                if !SUCCEEDED(hr) {
-                    warn!("Failed to add filter to DXGI info queue: {}", hr);
-                }
+                info_queue.AddStorageFilterEntries(dxgidebug::DXGI_DEBUG_DXGI, &filter);
+            } else {
+                warn!("DXGI info queue is not available");
             }
-        } else {
-            warn!("DXGI info queue is not available: {}", hr);
         }
     }
 
     // Create DXGI factory
     trace!("Creating DXGI factory");
     let mut factory = ComPtr::<dxgi1_4::IDXGIFactory4>::null();
-    let hr = unsafe {
-        dxgi1_3::CreateDXGIFactory2(
+    unsafe {
+        if SUCCEEDED(dxgi1_3::CreateDXGIFactory2(
             dxgi_factory_flags,
             &dxgi1_4::IDXGIFactory4::uuidof(),
             factory.as_mut_void(),
-        )
-    };
-    if SUCCEEDED(hr) {
-        info!("DXGI factory created");
-    } else {
-        error!("Failed to create DXGI factory");
-        panic!();
+        )) {
+            info!("DXGI factory created");
+        } else {
+            error!("Failed to create DXGI factory");
+            panic!();
+        }
     }
 
     // Determine if tearing is supported for fullscreen borderless windows
-    let mut _allow_tearing = true;
+    let mut _allow_tearing = false;
     if flags.contains(InitFlags::ALLOW_TEARING) {
         trace!("Checking variable refresh rate display support");
         unsafe {
@@ -132,13 +110,15 @@ pub fn init_d3d12(flags: InitFlags) {
                     &mut allow_tearing_feature as *mut _ as *mut _,
                     mem::size_of::<minwindef::BOOL>() as _,
                 );
-                if !SUCCEEDED(hr) || allow_tearing_feature == minwindef::FALSE {
-                    _allow_tearing = false;
-                    warn!("Variable refresh rate displays not supported");
-                } else {
-                    info!("Variable refresh rate displays supported")
+                if SUCCEEDED(hr) && allow_tearing_feature == minwindef::TRUE {
+                    _allow_tearing = true;
                 }
             }
+        }
+        if _allow_tearing {
+            info!("Variable refresh rate displays supported");
+        } else {
+            warn!("Variable refresh rate displays not supported");
         }
     }
 
@@ -150,30 +130,27 @@ fn get_adapter(factory: &ComPtr<dxgi1_4::IDXGIFactory4>) -> ComPtr<dxgi::IDXGIAd
     let mut adapter = ComPtr::<dxgi::IDXGIAdapter1>::null();
     unsafe {
         // Pretty much all unsafe here
+        let mut index = 0;
         if let Ok(factory6) = factory.cast::<dxgi1_6::IDXGIFactory6>() {
-            let mut index = 0;
             loop {
-                if winerror::DXGI_ERROR_NOT_FOUND
-                    != factory6.EnumAdapterByGpuPreference(
-                        index,
-                        dxgi1_6::DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                        &dxgi::IDXGIAdapter1::uuidof(),
-                        adapter.as_mut_void(),
-                    )
-                {
+                if SUCCEEDED(factory6.EnumAdapterByGpuPreference(
+                    index,
+                    dxgi1_6::DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                    &dxgi::IDXGIAdapter1::uuidof(),
+                    adapter.as_mut_void(),
+                )) {
+                    index += 1;
                     let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
-                    adapter.GetDesc1(&mut desc);
+                    let hr = adapter.GetDesc1(&mut desc);
+                    if FAILED(hr) {
+                        error!("Failed to get adapter description");
+                        panic!();
+                    }
 
                     // Skip the Basic Render Driver adapter.
                     if (desc.Flags & dxgi::DXGI_ADAPTER_FLAG_SOFTWARE) != 0 {
                         continue;
                     }
-
-                    let device_name = {
-                        let len = desc.Description.iter().take_while(|&&c| c != 0).count();
-                        let name = <OsString as OsStringExt>::from_wide(&desc.Description[..len]);
-                        name.to_string_lossy().into_owned()
-                    };
 
                     if SUCCEEDED(d3d12::D3D12CreateDevice(
                         adapter.as_raw() as _,
@@ -181,20 +158,78 @@ fn get_adapter(factory: &ComPtr<dxgi1_4::IDXGIFactory4>) -> ComPtr<dxgi::IDXGIAd
                         &d3d12::ID3D12Device::uuidof(),
                         ptr::null_mut(),
                     )) {
-                        info!(
-                            "Found Direct3D adapter {} with {}MB of dedicated video memory",
-                            device_name,
-                            desc.DedicatedVideoMemory / 1000 / 1000
-                        );
                         break;
                     }
-
-                    index += 1;
                 }
             }
         } else {
-            unimplemented!();
+            // Find the adapter with the largest dedicated video memory
+            let mut current_adapter = ComPtr::<dxgi::IDXGIAdapter1>::null();
+            let mut index = 0;
+            let mut max_dedicated_video_memeory_found: usize = 0;
+            while SUCCEEDED(
+                factory.EnumAdapters1(index, current_adapter.as_mut_void() as *mut *mut _),
+            ) {
+                index += 1;
+
+                let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
+                let hr = current_adapter.GetDesc1(&mut desc);
+                if FAILED(hr) {
+                    error!("Failed to get adapter description");
+                    panic!();
+                }
+
+                // Skip the Basic Render Driver adapter.
+                if (desc.Flags & dxgi::DXGI_ADAPTER_FLAG_SOFTWARE) != 0 {
+                    continue;
+                }
+
+                if SUCCEEDED(d3d12::D3D12CreateDevice(
+                    current_adapter.as_raw() as _,
+                    d3dcommon::D3D_FEATURE_LEVEL_11_0,
+                    &d3d12::ID3D12Device::uuidof(),
+                    ptr::null_mut(),
+                )) && desc.DedicatedVideoMemory > max_dedicated_video_memeory_found
+                {
+                    max_dedicated_video_memeory_found = desc.DedicatedVideoMemory;
+                    adapter = current_adapter.clone();
+                }
+            }
         }
+
+        #[cfg(debug_assertions)]
+        {
+            if adapter.is_null()
+                && FAILED(
+                    factory.EnumWarpAdapter(&dxgi::IDXGIAdapter1::uuidof(), adapter.as_mut_void()),
+                )
+            {
+                error!("Failed to create the WARP adapter. ");
+                panic!();
+            }
+        }
+
+        if adapter.is_null() {
+            error!("No Direct3D adapter found");
+            panic!();
+        }
+
+        let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
+        let hr = adapter.GetDesc1(&mut desc);
+        if FAILED(hr) {
+            error!("Failed to get adapter description");
+            panic!();
+        }
+        let device_name = {
+            let len = desc.Description.iter().take_while(|&&c| c != 0).count();
+            let name = <OsString as OsStringExt>::from_wide(&desc.Description[..len]);
+            name.to_string_lossy().into_owned()
+        };
+        info!(
+            "Found Direct3D adapter '{}' with {}MB of dedicated video memory",
+            device_name,
+            desc.DedicatedVideoMemory / 1000 / 1000
+        );
     }
     adapter
 }
