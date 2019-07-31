@@ -29,17 +29,17 @@ pub fn init_d3d12(flags: InitFlags) {
     // Enable debug layer
     #[cfg(debug_assertions)]
     {
-        trace!("Enabling Direct3D debug device");
+        trace!("Enabling D3D12 debug device");
         let mut debug_controller = ComPtr::<d3d12sdklayers::ID3D12Debug>::null();
         unsafe {
             if SUCCEEDED(d3d12::D3D12GetDebugInterface(
                 &d3d12sdklayers::ID3D12Debug::uuidof(),
                 debug_controller.as_mut_void(),
             )) {
-                info!("Direct3D debug device enabled");
+                info!("D3D12 debug device enabled");
                 debug_controller.EnableDebugLayer();
             } else {
-                warn!("Direct3D debug device is not available");
+                warn!("D3D12 debug device is not available");
             }
         }
 
@@ -123,7 +123,38 @@ pub fn init_d3d12(flags: InitFlags) {
     }
 
     // Get adapter
-    let _adapter = get_adapter(&factory);
+    trace!("Searching for D3D12 adapter");
+    let adapter = get_adapter(&factory);
+    unsafe {
+        let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
+        let hr = adapter.GetDesc1(&mut desc);
+        if FAILED(hr) {
+            error!("Failed to get adapter description");
+            panic!();
+        }
+        let device_name = {
+            let len = desc.Description.iter().take_while(|&&c| c != 0).count();
+            let name = <OsString as OsStringExt>::from_wide(&desc.Description[..len]);
+            name.to_string_lossy().into_owned()
+        };
+        info!(
+            "Found D3D12 adapter '{}' with {}MB of dedicated video memory",
+            device_name,
+            desc.DedicatedVideoMemory / 1000 / 1000
+        );
+    }
+
+    // Create D3D12 API device
+    trace!("Creating D3D12 device");
+    let device = create_device(&adapter);
+    unsafe {
+        device.SetName(
+            "AdamantDevice"
+                .encode_utf16()
+                .collect::<Vec<u16>>()
+                .as_ptr(),
+        );
+    }
 }
 
 fn get_adapter(factory: &ComPtr<dxgi1_4::IDXGIFactory4>) -> ComPtr<dxgi::IDXGIAdapter1> {
@@ -208,28 +239,29 @@ fn get_adapter(factory: &ComPtr<dxgi1_4::IDXGIFactory4>) -> ComPtr<dxgi::IDXGIAd
                 panic!();
             }
         }
+    }
 
-        if adapter.is_null() {
-            error!("No Direct3D adapter found");
-            panic!();
-        }
-
-        let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
-        let hr = adapter.GetDesc1(&mut desc);
-        if FAILED(hr) {
-            error!("Failed to get adapter description");
-            panic!();
-        }
-        let device_name = {
-            let len = desc.Description.iter().take_while(|&&c| c != 0).count();
-            let name = <OsString as OsStringExt>::from_wide(&desc.Description[..len]);
-            name.to_string_lossy().into_owned()
-        };
-        info!(
-            "Found Direct3D adapter '{}' with {}MB of dedicated video memory",
-            device_name,
-            desc.DedicatedVideoMemory / 1000 / 1000
-        );
+    if adapter.is_null() {
+        error!("No D3D12 adapter found");
+        panic!();
     }
     adapter
+}
+
+fn create_device(adapter: &ComPtr<dxgi::IDXGIAdapter1>) -> ComPtr<d3d12::ID3D12Device> {
+    let mut device = ComPtr::<d3d12::ID3D12Device>::null();
+    unsafe {
+        if SUCCEEDED(d3d12::D3D12CreateDevice(
+            adapter.as_raw() as _,
+            d3dcommon::D3D_FEATURE_LEVEL_11_0,
+            &d3d12::ID3D12Device::uuidof(),
+            device.as_mut_void(),
+        )) {
+            info!("D3D12 device created");
+        } else {
+            error!("Failed to create D3D12 device");
+            panic!();
+        }
+    }
+    device
 }
