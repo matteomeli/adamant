@@ -1,4 +1,4 @@
-use adamant;
+use adamant::game_loop::GameLoop;
 
 use env_logger::{self, Env};
 
@@ -35,7 +35,7 @@ fn main() {
 
     let mut init_params = adamant::InitParams::new(window.hwnd() as *mut _, 1280, 720);
     init_params.flags = adamant::InitFlags::ALLOW_TEARING | adamant::InitFlags::ENABLE_HDR;
-    adamant::init_d3d12(init_params);
+    let mut game_loop = GameLoop::new(init_params);
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -51,6 +51,7 @@ fn main() {
                 // It's preferrable to render in this event rather than in EventsCleared, since
                 // rendering in here allows the program to gracefully handle redraws requested
                 // by the OS.
+                game_loop.tick();
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,

@@ -9,6 +9,7 @@ dependencies = [
  "log 0.4.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "winit 0.20.0-alpha2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wio 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -866,6 +867,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wio"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "winapi 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "ws2_32-sys"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -998,6 +1007,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum winapi-x86_64-pc-windows-gnu 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 "checksum wincolor 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "561ed901ae465d6185fa7864d63fbd5720d0ef718366c9a4dc83cf6170d7e9ba"
 "checksum winit 0.20.0-alpha2 (registry+https://github.com/rust-lang/crates.io-index)" = "16df593cb202a335417762f283605e45222345a2eb94c9dd6d1f6f2ddba0b4e4"
+"checksum wio 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "5d129932f4644ac2396cb456385cbf9e63b5b30c6e8dc4820bdca4eb082037a5"
 "checksum ws2_32-sys 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "d59cefebd0c892fa2dd6de581e937301d8552cb44489cdff035c6187cb63fa5e"
 "checksum x11-dl 2.18.3 (registry+https://github.com/rust-lang/crates.io-index)" = "940586acb859ea05c53971ac231685799a7ec1dee66ac0bccc0e6ad96e06b4e3"
 "checksum xdg 2.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "d089681aa106a86fade1b0128fb5daf07d5867a509ab036d99988dec80429a57"
