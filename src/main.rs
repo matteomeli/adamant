@@ -57,8 +57,15 @@ fn main() {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                info!("The close button was pressed; stopping");
+                info!("Window was closed, exiting.");
                 *control_flow = ControlFlow::Exit
+            }
+            Event::WindowEvent {
+                event: WindowEvent::Resized(LogicalSize { width, height }),
+                ..
+            } => {
+                info!("Window size has changed.");
+                game_loop.on_window_size_changed(width as _, height as _);
             }
             // ControlFlow::Poll continuously runs the event loop, even if the OS hasn't
             // dispatched any events. This is ideal for games and similar applications.
