@@ -370,7 +370,16 @@ impl D3D12Layer {
             // If the device was reset we must completely reinitialize the renderer.
             if hr == winerror::DXGI_ERROR_DEVICE_REMOVED || hr == winerror::DXGI_ERROR_DEVICE_RESET
             {
-                unimplemented!();
+                warn!(
+                    "Device lost on ResizeBuffers() function call. Reason code: {}",
+                    if hr == winerror::DXGI_ERROR_DEVICE_REMOVED {
+                        self.device.GetDeviceRemovedReason()
+                    } else {
+                        hr
+                    }
+                );
+                // If the device was removed for any reason, a new device and swap chain will need to be created.
+                self.handle_device_lost();
             } else if FAILED(hr) {
                 panic!("Failed to present");
             } else {
@@ -1158,7 +1167,21 @@ impl D3D12Layer {
                     0
                 },
             );
-            if FAILED(hr) {
+            if hr == winerror::DXGI_ERROR_DEVICE_REMOVED || hr == winerror::DXGI_ERROR_DEVICE_RESET {
+                warn!(
+                    "Device lost on ResizeBuffers() function call. Reason code: {}",
+                    if hr == winerror::DXGI_ERROR_DEVICE_REMOVED {
+                        self.device.GetDeviceRemovedReason()
+                    } else {
+                        hr
+                    }
+                );
+                // If the device was removed for any reason, a new device and swap chain will need to be created.
+                self.handle_device_lost();
+                // Also do not continue execution of this method.
+                // handle_device_lost() will correctly set up the new device and swap chain and other window size dependent resources.
+                return;
+            } else if FAILED(hr) {
                 panic!("Failed to resize resources on window size changed.");
             }
         }
@@ -1230,14 +1253,12 @@ impl D3D12Layer {
             }
         }
     }
-}
 
-impl Drop for D3D12Layer {
-    fn drop(&mut self) {
+    fn destroy(&mut self) {
+        // Ensure that the GPU is no longer referencing resources that are about to be destroyed.
+        self.wait_for_gpu();
+
         unsafe {
-            // Ensure that the GPU is no longer referencing resources that are about to be destroyed.
-            self.wait_for_gpu();
-
             // Destroy resources in reverse order
             self.depth_stencil.destroy();
             for render_target in self.render_targets.iter() {
@@ -1292,5 +1313,199 @@ impl Drop for D3D12Layer {
                 }
             }
         }
+    }
+
+    fn handle_device_lost(&mut self) {
+        trace!("Reinitializing D3D12 layer.");
+
+        // Destroy resources
+        self.destroy();
+
+        // Enable debug layer.
+        let factory_flags = Self::enable_debug_layer();
+
+        // Create DXGI factory.
+        self.factory = Self::create_factory(factory_flags);
+
+        // Determine if tearing is supported for fullscreen borderless windows.
+        if self.flags.contains(InitFlags::ALLOW_TEARING) {
+            trace!("Checking variable refresh rate display support.");
+            unsafe {
+                if let Ok(factory5) = self.factory.cast::<dxgi1_5::IDXGIFactory5>() {
+                    let mut allow_tearing_feature = minwindef::FALSE;
+                    let hr = factory5.CheckFeatureSupport(
+                        dxgi1_5::DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+                        &mut allow_tearing_feature as *mut _ as *mut _,
+                        mem::size_of::<minwindef::BOOL>() as _,
+                    );
+                    factory5.destroy();
+                    if FAILED(hr) || allow_tearing_feature == minwindef::FALSE {
+                        self.flags.remove(InitFlags::ALLOW_TEARING);
+                    }
+                }
+            }
+            if self.flags.contains(InitFlags::ALLOW_TEARING) {
+                info!("Variable refresh rate displays supported.");
+            } else {
+                warn!("Variable refresh rate displays not supported.");
+            }
+        }
+
+        // Get adapter.
+        let adapter = Self::get_adapter(self.factory, self.min_feature_level);
+
+        // Create D3D12 API device.
+        self.device = Self::create_device(adapter, self.min_feature_level);
+
+        // Destroy adapter as it's not needed anymore
+        unsafe {
+            adapter.destroy();
+        }
+
+        // Configure debug device.
+        #[cfg(debug_assertions)]
+        {
+            unsafe {
+                if let Ok(info_queue) = self.device.cast::<d3d12sdklayers::ID3D12InfoQueue>() {
+                    info_queue.SetBreakOnSeverity(
+                        d3d12sdklayers::D3D12_MESSAGE_SEVERITY_CORRUPTION,
+                        minwindef::TRUE,
+                    );
+                    info_queue.SetBreakOnSeverity(
+                        d3d12sdklayers::D3D12_MESSAGE_SEVERITY_ERROR,
+                        minwindef::TRUE,
+                    );
+
+                    let mut hide: Vec<d3d12sdklayers::D3D12_MESSAGE_ID> = vec![
+                        d3d12sdklayers::D3D12_MESSAGE_ID_EXECUTECOMMANDLISTS_WRONGSWAPCHAINBUFFERREFERENCE,
+                        d3d12sdklayers::D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
+                        d3d12sdklayers::D3D12_MESSAGE_ID_MAP_INVALID_NULLRANGE,
+                        d3d12sdklayers::D3D12_MESSAGE_ID_UNMAP_INVALID_NULLRANGE,
+                    ];
+                    let mut filter = d3d12sdklayers::D3D12_INFO_QUEUE_FILTER {
+                        DenyList: d3d12sdklayers::D3D12_INFO_QUEUE_FILTER_DESC {
+                            NumIDs: hide.len() as _,
+                            pIDList: hide.as_mut_ptr(),
+                            ..mem::zeroed()
+                        },
+                        ..mem::zeroed()
+                    };
+                    info_queue.AddStorageFilterEntries(&mut filter);
+                    info_queue.destroy();
+                }
+            }
+        }
+
+        // Determine maximum feature level supported for the obtained device.
+        let levels: [d3dcommon::D3D_FEATURE_LEVEL; 4] = [
+            d3dcommon::D3D_FEATURE_LEVEL_12_1,
+            d3dcommon::D3D_FEATURE_LEVEL_12_0,
+            d3dcommon::D3D_FEATURE_LEVEL_11_1,
+            d3dcommon::D3D_FEATURE_LEVEL_11_0,
+        ];
+        let mut feature_levels = d3d12::D3D12_FEATURE_DATA_FEATURE_LEVELS {
+            NumFeatureLevels: levels.len() as _,
+            pFeatureLevelsRequested: levels.as_ptr(),
+            MaxSupportedFeatureLevel: d3dcommon::D3D_FEATURE_LEVEL_11_0,
+        };
+        self.feature_level = unsafe {
+            if SUCCEEDED(self.device.CheckFeatureSupport(
+                d3d12::D3D12_FEATURE_FEATURE_LEVELS,
+                &mut feature_levels as *mut _ as *mut _,
+                mem::size_of::<d3d12::D3D12_FEATURE_DATA_FEATURE_LEVELS>() as _,
+            )) {
+                feature_levels.MaxSupportedFeatureLevel
+            } else {
+                self.min_feature_level
+            }
+        };
+
+        // Create command queue.
+        self.command_queue = Self::create_command_queue(self.device);
+
+        // Create descriptor heaps for render target and depth stencil views.
+        self.rtv_descriptor_heap =
+            Self::create_rtv_descriptor_heap(self.device, self.back_buffer_count);
+        self.rtv_descriptor_size = unsafe {
+            self.device
+                .GetDescriptorHandleIncrementSize(d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_RTV)
+        };
+        self.dsv_descriptor_heap = Self::create_dsv_descriptor_heap(self.device);
+
+        // Create a command allocator for each back buffer that will be rendered to.
+        self.command_allocators =
+            Self::create_command_allocators(self.device, self.back_buffer_count);
+
+        // Create a command list for recording graphics commands.
+        self.command_list = Self::create_command_list(self.device, self.command_allocators[0]);
+
+        // Create fence for syncing CPU and GPU execution processes.
+        self.fence_values = vec![0; self.back_buffer_count as usize];
+        self.fence = Self::create_fence(self.device, self.fence_values[0]);
+        self.fence_event = Self::create_fence_event();
+
+        // Compute appropriate back buffer format.
+        self.back_buffer_format = Self::no_srgb(self.back_buffer_format);
+
+        // Create swapchain.
+        self.swap_chain = Self::create_swap_chain(
+            self.factory,
+            self.command_queue,
+            self.window_handle,
+            self.back_buffer_width.try_into().unwrap(),
+            self.back_buffer_height.try_into().unwrap(),
+            self.back_buffer_format,
+            self.back_buffer_count,
+            self.flags.contains(InitFlags::ALLOW_TEARING),
+        );
+
+        // Handle HDR output.
+        self.color_space =
+            Self::compute_color_space(self.swap_chain, self.back_buffer_format, self.flags);
+
+        // Create render targets for each bak buffer.
+        self.render_targets = Self::create_render_targets(
+            self.device,
+            self.swap_chain,
+            self.rtv_descriptor_heap,
+            self.back_buffer_format,
+            self.back_buffer_count,
+            self.rtv_descriptor_size,
+        );
+
+        self.back_buffer_index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
+
+        // Allocate a 2-D surface as the depth/stencil buffer and create a depth/stencil view on this surface.
+        self.depth_stencil = Self::create_depth_stencil(
+            self.device,
+            self.dsv_descriptor_heap,
+            self.depth_buffer_format,
+            self.back_buffer_width.try_into().unwrap(),
+            self.back_buffer_height.try_into().unwrap(),
+        );
+
+        // Set rendering viewport and scissor rectangle to fit client window.
+        self.screen_viewport = d3d12::D3D12_VIEWPORT {
+            TopLeftX: 0.0,
+            TopLeftY: 0.0,
+            Width: self.back_buffer_width as _,
+            Height: self.back_buffer_width as _,
+            MinDepth: d3d12::D3D12_MIN_DEPTH,
+            MaxDepth: d3d12::D3D12_MAX_DEPTH,
+        };
+        self.scissor_rect = d3d12::D3D12_RECT {
+            left: 0,
+            top: 0,
+            right: self.back_buffer_width as _,
+            bottom: self.back_buffer_height as _,
+        };
+
+        info!("D3D12 layer reinitialized successfully.");
+    }
+}
+
+impl Drop for D3D12Layer {
+    fn drop(&mut self) {
+        self.destroy();
     }
 }
