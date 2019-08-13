@@ -371,7 +371,7 @@ impl D3D12Layer {
             if hr == winerror::DXGI_ERROR_DEVICE_REMOVED || hr == winerror::DXGI_ERROR_DEVICE_RESET
             {
                 warn!(
-                    "Device lost on ResizeBuffers() function call. Reason code: {}",
+                    "Device lost on Present() function call. Reason code: {}",
                     if hr == winerror::DXGI_ERROR_DEVICE_REMOVED {
                         self.device.GetDeviceRemovedReason()
                     } else {
@@ -1167,7 +1167,8 @@ impl D3D12Layer {
                     0
                 },
             );
-            if hr == winerror::DXGI_ERROR_DEVICE_REMOVED || hr == winerror::DXGI_ERROR_DEVICE_RESET {
+            if hr == winerror::DXGI_ERROR_DEVICE_REMOVED || hr == winerror::DXGI_ERROR_DEVICE_RESET
+            {
                 warn!(
                     "Device lost on ResizeBuffers() function call. Reason code: {}",
                     if hr == winerror::DXGI_ERROR_DEVICE_REMOVED {
