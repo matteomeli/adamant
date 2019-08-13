@@ -1,5 +1,8 @@
+pub mod com;
 pub mod d3d12;
 pub mod game_loop;
+
+use com::ComPtr;
 
 use bitflags::bitflags;
 
@@ -13,6 +16,7 @@ bitflags! {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct InitParams {
     pub window_handle: HWND,
     pub window_width: u32,
