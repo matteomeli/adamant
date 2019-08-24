@@ -1,6 +1,7 @@
-pub mod com;
-pub mod d3d12;
-pub mod game_loop;
+mod com;
+pub mod game_core;
+mod graphics_core;
+pub mod timer;
 
 use com::ComPtr;
 
@@ -34,9 +35,9 @@ impl InitParams {
             window_handle,
             window_width,
             window_height,
-            back_buffer_format: dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM,
+            back_buffer_format: dxgiformat::DXGI_FORMAT_R8G8B8A8_UNORM,
             depth_buffer_format: dxgiformat::DXGI_FORMAT_D32_FLOAT,
-            back_buffer_count: 2,
+            back_buffer_count: 3,
             min_feature_level: d3dcommon::D3D_FEATURE_LEVEL_11_0,
             flags: InitFlags::empty(),
         }

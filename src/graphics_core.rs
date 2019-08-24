@@ -16,7 +16,7 @@ use std::mem;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr;
 
-pub struct D3D12Layer {
+pub struct GraphicsCore {
     // Direct3D objects
     device: ComPtr<d3d12::ID3D12Device>,
     command_queue: ComPtr<d3d12::ID3D12CommandQueue>,
@@ -24,7 +24,7 @@ pub struct D3D12Layer {
     command_allocators: Vec<ComPtr<d3d12::ID3D12CommandAllocator>>,
     // Swap chain objects
     factory: ComPtr<dxgi1_4::IDXGIFactory4>,
-    swap_chain: ComPtr<dxgi1_4::IDXGISwapChain3>,
+    swapchain: ComPtr<dxgi1_5::IDXGISwapChain4>,
     render_targets: Vec<ComPtr<d3d12::ID3D12Resource>>,
     depth_stencil: ComPtr<d3d12::ID3D12Resource>,
     // Presentation/synchronization fence objects
@@ -56,7 +56,7 @@ pub struct D3D12Layer {
     back_buffer_index: u32,
 }
 
-impl D3D12Layer {
+impl GraphicsCore {
     pub fn new(params: InitParams) -> Self {
         trace!("Initializing D3D12 layer.");
 
@@ -64,7 +64,7 @@ impl D3D12Layer {
         let factory_flags = Self::enable_debug_layer();
 
         // Create DXGI factory.
-        let factory = Self::create_factory(factory_flags);
+        let factory = Self::create_factory(params.window_handle, factory_flags);
 
         // Determine if tearing is supported for fullscreen borderless windows.
         let mut flags = params.flags;
@@ -186,7 +186,7 @@ impl D3D12Layer {
         let back_buffer_format = Self::no_srgb(params.back_buffer_format);
 
         // Create swapchain.
-        let swap_chain = Self::create_swap_chain(
+        let swapchain = Self::create_swapchain(
             factory,
             command_queue,
             params.window_handle,
@@ -198,19 +198,19 @@ impl D3D12Layer {
         );
 
         // Handle HDR output.
-        let color_space = Self::compute_color_space(swap_chain, back_buffer_format, flags);
+        let color_space = Self::compute_color_space(swapchain, back_buffer_format, flags);
 
         // Create render targets for each bak buffer.
         let render_targets = Self::create_render_targets(
             device,
-            swap_chain,
+            swapchain,
             rtv_descriptor_heap,
             back_buffer_format,
             params.back_buffer_count,
             rtv_descriptor_size,
         );
 
-        let back_buffer_index = unsafe { swap_chain.GetCurrentBackBufferIndex() };
+        let back_buffer_index = unsafe { swapchain.GetCurrentBackBufferIndex() };
 
         // Allocate a 2-D surface as the depth/stencil buffer and create a depth/stencil view on this surface.
         let depth_stencil = Self::create_depth_stencil(
@@ -239,13 +239,13 @@ impl D3D12Layer {
 
         info!("D3D12 layer initialized successfully.");
 
-        D3D12Layer {
+        GraphicsCore {
             device,
             command_queue,
             command_list,
             command_allocators,
             factory,
-            swap_chain,
+            swapchain,
             render_targets,
             depth_stencil,
             fence,
@@ -355,17 +355,17 @@ impl D3D12Layer {
             let command_list = self.command_list.as_raw() as *mut _;
             let command_lists = vec![command_list];
             self.command_queue
-                .ExecuteCommandLists(1, command_lists.as_ptr());
+                .ExecuteCommandLists(command_lists.len() as _, command_lists.as_ptr());
 
             let hr = if self.flags.contains(InitFlags::ALLOW_TEARING) {
                 // Recommended to always use tearing if supported when using a sync interval of 0.
                 // Note this will fail if in true 'fullscreen' mode.
-                self.swap_chain.Present(0, dxgi::DXGI_PRESENT_ALLOW_TEARING)
+                self.swapchain.Present(0, dxgi::DXGI_PRESENT_ALLOW_TEARING)
             } else {
                 // The first argument instructs DXGI to block until VSync, putting the application
                 // to sleep until the next VSync. This ensures we don't waste any cycles rendering
                 // frames that will never be displayed to the screen.
-                self.swap_chain.Present(1, 0)
+                self.swapchain.Present(1, 0)
             };
             // If the device was reset we must completely reinitialize the renderer.
             if hr == winerror::DXGI_ERROR_DEVICE_REMOVED || hr == winerror::DXGI_ERROR_DEVICE_RESET
@@ -403,7 +403,7 @@ impl D3D12Layer {
     pub fn on_window_size_changed(&mut self, width: i32, height: i32) -> bool {
         if self.back_buffer_width == width && self.back_buffer_height == height {
             self.color_space =
-                Self::compute_color_space(self.swap_chain, self.back_buffer_format, self.flags);
+                Self::compute_color_space(self.swapchain, self.back_buffer_format, self.flags);
             false
         } else {
             trace!("Window size has changed, updating resources.");
@@ -479,7 +479,7 @@ impl D3D12Layer {
         dxgi_factory_flags
     }
 
-    fn create_factory(flags: u32) -> ComPtr<dxgi1_4::IDXGIFactory4> {
+    fn create_factory(window_handle: HWND, flags: u32) -> ComPtr<dxgi1_4::IDXGIFactory4> {
         trace!("Creating DXGI factory.");
         let mut factory = ComPtr::<dxgi1_4::IDXGIFactory4>::null();
         unsafe {
@@ -492,6 +492,13 @@ impl D3D12Layer {
             } else {
                 panic!("Failed to create DXGI factory.");
             }
+
+            // Does not support exclusive full-screen mode and prevents DXGI from responding to the ALT+ENTER shortcut.
+            const DXGI_MWA_NO_ALT_ENTER: u32 = 1 << 1; // DXGI_MWA_NO_ALT_ENTER (can't find it in winit, should be in dxgi.h)
+            let hr = factory.MakeWindowAssociation(window_handle, DXGI_MWA_NO_ALT_ENTER);
+            if FAILED(hr) {
+                panic!("Failed to disable ALT+ENTER shortcut to go fullscreen.");
+            }
         }
         factory
     }
@@ -499,7 +506,7 @@ impl D3D12Layer {
     fn get_adapter(
         factory: ComPtr<dxgi1_4::IDXGIFactory4>,
         min_feature_level: u32,
-    ) -> ComPtr<dxgi::IDXGIAdapter1> {
+    ) -> ComPtr<dxgi1_6::IDXGIAdapter4> {
         trace!("Searching for D3D12 adapter.");
         let mut adapter = ComPtr::<dxgi::IDXGIAdapter1>::null();
         unsafe {
@@ -526,7 +533,7 @@ impl D3D12Layer {
                         }
 
                         if SUCCEEDED(d3d12::D3D12CreateDevice(
-                            adapter.as_unknown() as *const _ as *mut _,
+                            adapter.as_raw() as _,
                             min_feature_level,
                             &d3d12::ID3D12Device::uuidof(),
                             ptr::null_mut(),
@@ -559,7 +566,7 @@ impl D3D12Layer {
                     }
 
                     if SUCCEEDED(d3d12::D3D12CreateDevice(
-                        current_adapter.as_unknown() as *const _ as *mut _,
+                        current_adapter.as_raw() as _,
                         min_feature_level,
                         &d3d12::ID3D12Device::uuidof(),
                         ptr::null_mut(),
@@ -597,27 +604,34 @@ impl D3D12Layer {
         }
 
         unsafe {
-            let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
-            let hr = adapter.GetDesc1(&mut desc);
-            if FAILED(hr) {
-                panic!("Failed to get adapter description.");
+            if let Ok(adapter4) = adapter.cast::<dxgi1_6::IDXGIAdapter4>() {
+                adapter.destroy();
+
+                let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
+                let hr = adapter4.GetDesc1(&mut desc);
+                if FAILED(hr) {
+                    panic!("Failed to get adapter description.");
+                }
+                let device_name = {
+                    let len = desc.Description.iter().take_while(|&&c| c != 0).count();
+                    let name = <OsString as OsStringExt>::from_wide(&desc.Description[..len]);
+                    name.to_string_lossy().into_owned()
+                };
+                info!(
+                    "Found D3D12 adapter '{}' with {}MB of dedicated video memory.",
+                    device_name,
+                    desc.DedicatedVideoMemory / 1000 / 1000
+                );
+
+                adapter4
+            } else {
+                panic!("Failed to create D3D12 adapter.")
             }
-            let device_name = {
-                let len = desc.Description.iter().take_while(|&&c| c != 0).count();
-                let name = <OsString as OsStringExt>::from_wide(&desc.Description[..len]);
-                name.to_string_lossy().into_owned()
-            };
-            info!(
-                "Found D3D12 adapter '{}' with {}MB of dedicated video memory.",
-                device_name,
-                desc.DedicatedVideoMemory / 1000 / 1000
-            );
         }
-        adapter
     }
 
     fn create_device(
-        adapter: ComPtr<dxgi::IDXGIAdapter1>,
+        adapter: ComPtr<dxgi1_6::IDXGIAdapter4>,
         min_feature_level: u32,
     ) -> ComPtr<d3d12::ID3D12Device> {
         trace!("Creating D3D12 device.");
@@ -634,12 +648,15 @@ impl D3D12Layer {
                 panic!("Failed to create D3D12 device.");
             }
 
-            device.SetName(
-                "AdamantDevice"
-                    .encode_utf16()
-                    .collect::<Vec<u16>>()
-                    .as_ptr(),
-            );
+            #[cfg(debug_assertions)]
+            {
+                device.SetName(
+                    "AdamantDevice"
+                        .encode_utf16()
+                        .collect::<Vec<u16>>()
+                        .as_ptr(),
+                );
+            }
         }
         device
     }
@@ -666,12 +683,15 @@ impl D3D12Layer {
                 panic!("Failed to create D3D12 command queue.");
             }
 
-            command_queue.SetName(
-                "AdamantCommandQueue"
-                    .encode_utf16()
-                    .collect::<Vec<u16>>()
-                    .as_ptr(),
-            );
+            #[cfg(debug_assertions)]
+            {
+                command_queue.SetName(
+                    "AdamantCommandQueue"
+                        .encode_utf16()
+                        .collect::<Vec<u16>>()
+                        .as_ptr(),
+                );
+            }
         }
         command_queue
     }
@@ -699,12 +719,15 @@ impl D3D12Layer {
                 panic!("Failed to create D3D12 render target view descriptor heap.")
             }
 
-            rtv_descriptor_heap.SetName(
-                "AdamantRTVDescriptorHeap"
-                    .encode_utf16()
-                    .collect::<Vec<u16>>()
-                    .as_ptr(),
-            );
+            #[cfg(debug_assertions)]
+            {
+                rtv_descriptor_heap.SetName(
+                    "AdamantRTVDescriptorHeap"
+                        .encode_utf16()
+                        .collect::<Vec<u16>>()
+                        .as_ptr(),
+                );
+            }
         }
         rtv_descriptor_heap
     }
@@ -731,12 +754,15 @@ impl D3D12Layer {
                 panic!("Failed to create D3D12 depth stencil view descriptor heap.")
             }
 
-            dsv_descriptor_heap.SetName(
-                "AdamantDSVDescriptorHeap"
-                    .encode_utf16()
-                    .collect::<Vec<u16>>()
-                    .as_ptr(),
-            );
+            #[cfg(debug_assertions)]
+            {
+                dsv_descriptor_heap.SetName(
+                    "AdamantDSVDescriptorHeap"
+                        .encode_utf16()
+                        .collect::<Vec<u16>>()
+                        .as_ptr(),
+                );
+            }
         }
         dsv_descriptor_heap
     }
@@ -760,12 +786,15 @@ impl D3D12Layer {
                     command_allocator.as_mut_void(),
                 )) {
                     info!("D3D12 command allocator created for back buffer {}.", n);
-                    command_allocator.SetName(
-                        format!("AdamantCommandAllocator{}", n)
-                            .encode_utf16()
-                            .collect::<Vec<u16>>()
-                            .as_ptr(),
-                    );
+                    #[cfg(debug_assertions)]
+                    {
+                        command_allocator.SetName(
+                            format!("AdamantCommandAllocator{}", n)
+                                .encode_utf16()
+                                .collect::<Vec<u16>>()
+                                .as_ptr(),
+                        );
+                    }
                     command_allocators.push(command_allocator);
                 } else {
                     panic!(
@@ -802,12 +831,15 @@ impl D3D12Layer {
                 panic!("Failed to close D3D12 command list.")
             }
 
-            command_list.SetName(
-                "AdamantCommandList"
-                    .encode_utf16()
-                    .collect::<Vec<u16>>()
-                    .as_ptr(),
-            );
+            #[cfg(debug_assertions)]
+            {
+                command_list.SetName(
+                    "AdamantCommandList"
+                        .encode_utf16()
+                        .collect::<Vec<u16>>()
+                        .as_ptr(),
+                );
+            }
         }
         command_list
     }
@@ -827,7 +859,10 @@ impl D3D12Layer {
                 panic!("Failed to create D3D12 fence.")
             }
 
-            fence.SetName("AdamantFence".encode_utf16().collect::<Vec<u16>>().as_ptr());
+            #[cfg(debug_assertions)]
+            {
+                fence.SetName("AdamantFence".encode_utf16().collect::<Vec<u16>>().as_ptr());
+            }
         }
         fence
     }
@@ -852,7 +887,7 @@ impl D3D12Layer {
         }
     }
 
-    fn create_swap_chain(
+    fn create_swapchain(
         factory: ComPtr<dxgi1_4::IDXGIFactory4>,
         command_queue: ComPtr<d3d12::ID3D12CommandQueue>,
         window_handle: HWND,
@@ -861,13 +896,14 @@ impl D3D12Layer {
         back_buffer_format: dxgiformat::DXGI_FORMAT,
         back_buffer_count: u32,
         is_tearing_allowed: bool,
-    ) -> ComPtr<dxgi1_4::IDXGISwapChain3> {
+    ) -> ComPtr<dxgi1_5::IDXGISwapChain4> {
         trace!("Creating D3D12 swap chain.");
         unsafe {
             let desc = dxgi1_2::DXGI_SWAP_CHAIN_DESC1 {
                 Width: back_buffer_width,
                 Height: back_buffer_height,
                 Format: back_buffer_format,
+                Stereo: minwindef::FALSE,
                 SampleDesc: dxgitype::DXGI_SAMPLE_DESC {
                     Count: 1,
                     Quality: 0,
@@ -876,39 +912,33 @@ impl D3D12Layer {
                 BufferCount: back_buffer_count,
                 Scaling: dxgi1_2::DXGI_SCALING_STRETCH,
                 SwapEffect: dxgi::DXGI_SWAP_EFFECT_FLIP_DISCARD,
-                AlphaMode: dxgi1_2::DXGI_ALPHA_MODE_IGNORE,
+                AlphaMode: dxgi1_2::DXGI_ALPHA_MODE_UNSPECIFIED,
                 Flags: if is_tearing_allowed {
                     dxgi::DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
                 } else {
                     0
                 },
-                ..mem::zeroed()
             };
             let fullscreen_desc = dxgi1_2::DXGI_SWAP_CHAIN_FULLSCREEN_DESC {
                 Windowed: minwindef::TRUE,
                 ..mem::zeroed()
             };
-            let mut swap_chain = ComPtr::<dxgi1_2::IDXGISwapChain1>::null();
+            let mut swapchain = ComPtr::<dxgi1_2::IDXGISwapChain1>::null();
             if SUCCEEDED(factory.CreateSwapChainForHwnd(
                 command_queue.as_raw() as *mut _,
                 window_handle,
                 &desc,
                 &fullscreen_desc,
                 ptr::null_mut(),
-                swap_chain.as_mut_void() as *mut *mut _ as *mut *mut _,
+                swapchain.as_mut_void() as *mut *mut _ as *mut *mut _,
             )) {
                 info!("D3D12 swapchain created.");
             } else {
                 panic!("Failed to create D3D12 swapchain.");
             }
-            if let Ok(swap_chain3) = swap_chain.cast::<dxgi1_4::IDXGISwapChain3>() {
-                // Does not support exclusive full-screen mode and prevents DXGI from responding to the ALT+ENTER shortcut.
-                let hr = factory.MakeWindowAssociation(window_handle, 1 << 1); // DXGI_MWA_NO_ALT_ENTER (can't find it in winit)
-                if FAILED(hr) {
-                    panic!("Failed to disable ALT+ENTER shortcut to go fullscreen.");
-                }
-                swap_chain.destroy();
-                swap_chain3
+            if let Ok(swapchain4) = swapchain.cast::<dxgi1_5::IDXGISwapChain4>() {
+                swapchain.destroy();
+                swapchain4
             } else {
                 panic!("Failed to create D3D12 swapchain.")
             }
@@ -916,14 +946,14 @@ impl D3D12Layer {
     }
 
     fn compute_color_space(
-        swap_chain: ComPtr<dxgi1_4::IDXGISwapChain3>,
+        swapchain: ComPtr<dxgi1_5::IDXGISwapChain4>,
         back_buffer_format: dxgiformat::DXGI_FORMAT,
         flags: InitFlags,
     ) -> dxgitype::DXGI_COLOR_SPACE_TYPE {
         let mut is_hdr10_supported = false;
         let output = ComPtr::<dxgi::IDXGIOutput>::null();
         unsafe {
-            if SUCCEEDED(swap_chain.GetContainingOutput(&mut output.as_raw())) {
+            if SUCCEEDED(swapchain.GetContainingOutput(&mut output.as_raw())) {
                 if let Ok(output6) = output.cast::<dxgi1_6::IDXGIOutput6>() {
                     let mut desc = dxgi1_6::DXGI_OUTPUT_DESC1 { ..mem::zeroed() };
                     if FAILED(output6.GetDesc1(&mut desc)) {
@@ -956,10 +986,10 @@ impl D3D12Layer {
 
         let mut color_space_support = 0;
         unsafe {
-            if SUCCEEDED(swap_chain.CheckColorSpaceSupport(color_space, &mut color_space_support))
+            if SUCCEEDED(swapchain.CheckColorSpaceSupport(color_space, &mut color_space_support))
                 && (color_space_support & dxgi1_4::DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)
                     != 0
-                && FAILED(swap_chain.SetColorSpace1(color_space))
+                && FAILED(swapchain.SetColorSpace1(color_space))
             {
                 panic!("Failed to set swapchain's color space to support HDR.");
             }
@@ -969,7 +999,7 @@ impl D3D12Layer {
 
     fn create_render_targets(
         device: ComPtr<d3d12::ID3D12Device>,
-        swap_chain: ComPtr<dxgi1_4::IDXGISwapChain3>,
+        swapchain: ComPtr<dxgi1_5::IDXGISwapChain4>,
         rtv_descriptor_heap: ComPtr<d3d12::ID3D12DescriptorHeap>,
         back_buffer_format: dxgiformat::DXGI_FORMAT,
         back_buffer_count: u32,
@@ -983,18 +1013,21 @@ impl D3D12Layer {
         unsafe {
             for n in 0..back_buffer_count {
                 let mut render_target = ComPtr::<d3d12::ID3D12Resource>::null();
-                if SUCCEEDED(swap_chain.GetBuffer(
+                if SUCCEEDED(swapchain.GetBuffer(
                     n,
                     &d3d12::ID3D12Resource::uuidof(),
                     render_target.as_mut_void(),
                 )) {
                     info!("D3D12 render target view created for back buffer {}.", n);
-                    render_target.SetName(
-                        format!("AdamantRenderTarget{}", n)
-                            .encode_utf16()
-                            .collect::<Vec<u16>>()
-                            .as_ptr(),
-                    );
+                    #[cfg(debug_assertions)]
+                    {
+                        render_target.SetName(
+                            format!("AdamantRenderTarget{}", n)
+                                .encode_utf16()
+                                .collect::<Vec<u16>>()
+                                .as_ptr(),
+                        );
+                    }
                 } else {
                     panic!(
                         "Failed to create D3D12 render target view for back buffer {}.",
@@ -1074,12 +1107,15 @@ impl D3D12Layer {
                 panic!("Failed to create D3D12 depth/stencil buffer.");
             }
 
-            (*depth_stencil).SetName(
-                "AdamantDepthStencil"
-                    .encode_utf16()
-                    .collect::<Vec<u16>>()
-                    .as_ptr(),
-            );
+            #[cfg(debug_assertions)]
+            {
+                depth_stencil.SetName(
+                    "AdamantDepthStencil"
+                        .encode_utf16()
+                        .collect::<Vec<u16>>()
+                        .as_ptr(),
+                );
+            }
 
             let dsv_desc = d3d12::D3D12_DEPTH_STENCIL_VIEW_DESC {
                 Format: depth_buffer_format,
@@ -1119,7 +1155,7 @@ impl D3D12Layer {
             }
 
             // Update the back buffer index.
-            self.back_buffer_index = self.swap_chain.GetCurrentBackBufferIndex();
+            self.back_buffer_index = self.swapchain.GetCurrentBackBufferIndex();
 
             // If the next frame is not ready to be rendered yet, wait until it is ready.
             if self.fence.GetCompletedValue() < self.fence_values[self.back_buffer_index as usize] {
@@ -1156,7 +1192,7 @@ impl D3D12Layer {
 
         // Resize swap chain.
         unsafe {
-            let hr = self.swap_chain.ResizeBuffers(
+            let hr = self.swapchain.ResizeBuffers(
                 self.back_buffer_count,
                 self.back_buffer_width.try_into().unwrap(),
                 self.back_buffer_height.try_into().unwrap(),
@@ -1189,19 +1225,19 @@ impl D3D12Layer {
 
         // Handle HDR output
         self.color_space =
-            Self::compute_color_space(self.swap_chain, self.back_buffer_format, self.flags);
+            Self::compute_color_space(self.swapchain, self.back_buffer_format, self.flags);
 
         // Create render targets for each back buffer.
         self.render_targets = Self::create_render_targets(
             self.device,
-            self.swap_chain,
+            self.swapchain,
             self.rtv_descriptor_heap,
             self.back_buffer_format,
             self.back_buffer_count,
             self.rtv_descriptor_size,
         );
 
-        self.back_buffer_index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
+        self.back_buffer_index = unsafe { self.swapchain.GetCurrentBackBufferIndex() };
 
         // Allocate a 2-D surface as the depth/stencil buffer and create a depth/stencil view on this surface.
         unsafe {
@@ -1232,7 +1268,7 @@ impl D3D12Layer {
         };
     }
 
-    fn wait_for_gpu(&mut self) {
+    pub fn wait_for_gpu(&mut self) {
         let fence_value = self.fence_values[self.back_buffer_index as usize];
         unsafe {
             // Schedule a Signal command in the GPU queue.
@@ -1255,10 +1291,7 @@ impl D3D12Layer {
         }
     }
 
-    fn destroy(&mut self) {
-        // Ensure that the GPU is no longer referencing resources that are about to be destroyed.
-        self.wait_for_gpu();
-
+    pub fn destroy(&mut self) {
         unsafe {
             // Destroy resources in reverse order
             self.depth_stencil.destroy();
@@ -1267,7 +1300,7 @@ impl D3D12Layer {
             }
             self.render_targets.clear();
 
-            self.swap_chain.destroy();
+            self.swapchain.destroy();
             self.fence.destroy();
             self.command_list.destroy();
 
@@ -1319,6 +1352,9 @@ impl D3D12Layer {
     fn handle_device_lost(&mut self) {
         trace!("Reinitializing D3D12 layer.");
 
+        // Ensure that the GPU is no longer referencing resources that are about to be destroyed.
+        self.wait_for_gpu();
+
         // Destroy resources
         self.destroy();
 
@@ -1326,7 +1362,7 @@ impl D3D12Layer {
         let factory_flags = Self::enable_debug_layer();
 
         // Create DXGI factory.
-        self.factory = Self::create_factory(factory_flags);
+        self.factory = Self::create_factory(self.window_handle, factory_flags);
 
         // Determine if tearing is supported for fullscreen borderless windows.
         if self.flags.contains(InitFlags::ALLOW_TEARING) {
@@ -1449,7 +1485,7 @@ impl D3D12Layer {
         self.back_buffer_format = Self::no_srgb(self.back_buffer_format);
 
         // Create swapchain.
-        self.swap_chain = Self::create_swap_chain(
+        self.swapchain = Self::create_swapchain(
             self.factory,
             self.command_queue,
             self.window_handle,
@@ -1462,19 +1498,19 @@ impl D3D12Layer {
 
         // Handle HDR output.
         self.color_space =
-            Self::compute_color_space(self.swap_chain, self.back_buffer_format, self.flags);
+            Self::compute_color_space(self.swapchain, self.back_buffer_format, self.flags);
 
         // Create render targets for each bak buffer.
         self.render_targets = Self::create_render_targets(
             self.device,
-            self.swap_chain,
+            self.swapchain,
             self.rtv_descriptor_heap,
             self.back_buffer_format,
             self.back_buffer_count,
             self.rtv_descriptor_size,
         );
 
-        self.back_buffer_index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
+        self.back_buffer_index = unsafe { self.swapchain.GetCurrentBackBufferIndex() };
 
         // Allocate a 2-D surface as the depth/stencil buffer and create a depth/stencil view on this surface.
         self.depth_stencil = Self::create_depth_stencil(
@@ -1502,11 +1538,5 @@ impl D3D12Layer {
         };
 
         info!("D3D12 layer reinitialized successfully.");
-    }
-}
-
-impl Drop for D3D12Layer {
-    fn drop(&mut self) {
-        self.destroy();
     }
 }

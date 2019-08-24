@@ -4,18 +4,9 @@ version = "0.1.0"
 authors = ["Matteo Meli <matteo.meli@gmail.com>"]
 edition = "2018"
 
-[lib]
-name = "adamant"
-path = "src/lib.rs"
-
-[[bin]]
-name = "adamant"
-path = "src/main.rs"
-
 [dependencies]
-winapi = { version = "0.3.7", features = ["d3d12", "d3d12sdklayers", "d3dcommon", "dxgi", "dxgi1_2", "dxgi1_3", "dxgi1_4", "dxgi1_5", "dxgi1_6", "dxgidebug", "dxgitype", "minwindef", "synchapi", "unknwnbase", "winerror", "windef", "winnt"] }
-log = "0.4"
-env_logger = "0.6.2"
 bitflags = "1.0"
-winit = "0.20.0-alpha2"
-wio = "0.2.2"
+env_logger = "0.6.2"
+log = "0.4"
+winapi = { version = "0.3.7", features = ["d3d12", "d3d12sdklayers", "d3dcommon", "dxgi", "dxgi1_2", "dxgi1_3", "dxgi1_4", "dxgi1_5", "dxgi1_6", "dxgidebug", "dxgitype", "minwindef", "synchapi", "unknwnbase", "winerror", "windef", "winnt"] }
+winit = "0.19.2"
