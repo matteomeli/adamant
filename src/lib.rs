@@ -1,13 +1,13 @@
 mod com;
 pub mod game_core;
+pub mod game_timer;
 mod graphics_core;
-pub mod timer;
 
 use com::ComPtr;
 
 use bitflags::bitflags;
 
-use winapi::shared::{dxgiformat, windef::HWND};
+use winapi::shared::dxgiformat;
 use winapi::um::d3dcommon;
 
 bitflags! {
@@ -19,7 +19,6 @@ bitflags! {
 
 #[derive(Copy, Clone, Debug)]
 pub struct InitParams {
-    pub window_handle: HWND,
     pub window_width: u32,
     pub window_height: u32,
     pub back_buffer_format: dxgiformat::DXGI_FORMAT,
@@ -30,9 +29,8 @@ pub struct InitParams {
 }
 
 impl InitParams {
-    pub fn new(window_handle: HWND, window_width: u32, window_height: u32) -> Self {
+    pub fn new(window_width: u32, window_height: u32) -> Self {
         Self {
-            window_handle,
             window_width,
             window_height,
             back_buffer_format: dxgiformat::DXGI_FORMAT_R8G8B8A8_UNORM,

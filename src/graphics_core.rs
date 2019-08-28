@@ -10,6 +10,11 @@ use winapi::shared::{
 use winapi::um::{d3d12, d3d12sdklayers, d3dcommon, dxgidebug, synchapi, winbase, winnt};
 use winapi::Interface;
 
+use winit::Window;
+
+#[cfg(target_os = "windows")]
+use winit::os::windows::WindowExt;
+
 use std::convert::TryInto;
 use std::ffi::OsString;
 use std::mem;
@@ -57,14 +62,16 @@ pub struct GraphicsCore {
 }
 
 impl GraphicsCore {
-    pub fn new(params: InitParams) -> Self {
+    pub fn new(window: &Window, params: InitParams) -> Self {
         trace!("Initializing D3D12 layer.");
+
+        let window_handle = window.get_hwnd() as *mut _;
 
         // Enable debug layer.
         let factory_flags = Self::enable_debug_layer();
 
         // Create DXGI factory.
-        let factory = Self::create_factory(params.window_handle, factory_flags);
+        let factory = Self::create_factory(window_handle, factory_flags);
 
         // Determine if tearing is supported for fullscreen borderless windows.
         let mut flags = params.flags;
@@ -189,7 +196,7 @@ impl GraphicsCore {
         let swapchain = Self::create_swapchain(
             factory,
             command_queue,
-            params.window_handle,
+            window_handle,
             params.window_width,
             params.window_height,
             back_buffer_format,
@@ -261,7 +268,7 @@ impl GraphicsCore {
             back_buffer_count: params.back_buffer_count,
             min_feature_level: d3dcommon::D3D_FEATURE_LEVEL_11_0,
             feature_level,
-            window_handle: params.window_handle,
+            window_handle,
             back_buffer_width: params.window_width as _,
             back_buffer_height: params.window_height as _,
             factory_flags,
