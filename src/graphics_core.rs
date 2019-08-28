@@ -62,7 +62,7 @@ pub struct GraphicsCore {
 }
 
 impl GraphicsCore {
-    pub fn new(window: &Window, params: InitParams) -> Self {
+    pub fn new(window: &Window, params: &InitParams) -> Self {
         trace!("Initializing D3D12 layer.");
 
         let window_handle = window.get_hwnd() as *mut _;

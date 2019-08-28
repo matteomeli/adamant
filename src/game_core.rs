@@ -27,7 +27,7 @@ pub struct GameSystems {
 }
 
 impl GameSystems {
-    pub fn new(window: &Window, params: InitParams) -> Self {
+    pub fn new(window: &Window, params: &InitParams) -> Self {
         let timer = GameTimer::new();
         let graphics = GraphicsCore::new(window, params);
         GameSystems { timer, graphics }
@@ -50,11 +50,11 @@ impl GameCore {
                 f64::from(params.window_width),
                 f64::from(params.window_height),
             ))
-            .with_title("Adamant Window")
+            .with_title(&params.window_title)
             .build(&event_loop)
             .unwrap();
 
-        let mut systems = GameSystems::new(&window, params);
+        let mut systems = GameSystems::new(&window, &params);
         let mut graphics = &mut systems.graphics;
         let mut timer = &mut systems.timer;
 

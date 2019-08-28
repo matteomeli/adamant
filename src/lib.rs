@@ -17,8 +17,9 @@ bitflags! {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct InitParams {
+    pub window_title: String,
     pub window_width: u32,
     pub window_height: u32,
     pub back_buffer_format: dxgiformat::DXGI_FORMAT,
@@ -29,8 +30,9 @@ pub struct InitParams {
 }
 
 impl InitParams {
-    pub fn new(window_width: u32, window_height: u32) -> Self {
+    pub fn new(window_title: String, window_width: u32, window_height: u32) -> Self {
         Self {
+            window_title,
             window_width,
             window_height,
             back_buffer_format: dxgiformat::DXGI_FORMAT_R8G8B8A8_UNORM,

@@ -39,7 +39,7 @@ impl GameApp for HelloWorld {
 fn main() {
     const DISPLAY_WIDTH: u32 = 1280;
     const DISPLAY_HEIGHT: u32 = 720;
-    let mut params = InitParams::new(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    let mut params = InitParams::new("Hello World".to_string(), DISPLAY_WIDTH, DISPLAY_HEIGHT);
     params.flags = InitFlags::ALLOW_TEARING | InitFlags::ENABLE_HDR;
 
     let mut app = HelloWorld::new();
