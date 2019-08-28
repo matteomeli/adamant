@@ -108,7 +108,9 @@ impl GameCore {
 
     fn update(timer: &mut GameTimer, app: &mut impl GameApp) -> bool {
         timer.tick();
+
         app.update(timer);
+
         !app.is_done()
     }
 
@@ -118,7 +120,7 @@ impl GameCore {
         // TODO: Clearing will be part of app::render() as well
         graphics.clear();
 
-        app.render(&timer);
+        app.render(timer);
 
         graphics.present();
     }
