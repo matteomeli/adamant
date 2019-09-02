@@ -12,11 +12,9 @@ use winit::{
 };
 
 pub trait GameApp {
-    fn startup(&mut self);
-    fn cleanup(&mut self);
-    fn is_done(&self) -> bool {
-        false
-    }
+    fn get_params(&self) -> InitParams;
+    fn init(&mut self);
+    fn destroy(&mut self);
     fn update(&mut self, timer: &GameTimer);
     fn render(&self, timer: &GameTimer);
 }
@@ -34,14 +32,22 @@ impl GameSystems {
     }
 }
 
-pub enum GameCore {}
+pub struct GameCore<A: GameApp> {
+    app: A,
+}
 
-impl GameCore {
-    pub fn run<A: GameApp>(app: &mut A, params: InitParams) {
+impl<A: GameApp> GameCore<A> {
+    pub fn new(app: A) -> Self {
+        GameCore { app }
+    }
+
+    pub fn run(mut self) {
         let env = Env::default()
             .filter_or("MY_LOG_LEVEL", "trace")
             .write_style_or("MY_LOG_STYLE", "auto");
         env_logger::init_from_env(env);
+
+        let params = &self.app.get_params();
 
         let mut event_loop = EventsLoop::new();
         let window = WindowBuilder::new()
@@ -54,15 +60,19 @@ impl GameCore {
             .build(&event_loop)
             .unwrap();
 
-        let mut systems = GameSystems::new(&window, &params);
+        let mut systems = GameSystems::new(&window, params);
         let mut graphics = &mut systems.graphics;
-        let mut timer = &mut systems.timer;
+        let timer = &mut systems.timer;
 
-        app.startup();
+        self.app.init();
 
         timer.reset();
 
+        let mut frame_count = 0;
+        let mut elapsed_time: f64 = 0.0;
+
         let mut is_running = true;
+        let mut is_paused = false;
         while is_running {
             event_loop.poll_events(|event| match event {
                 Event::WindowEvent {
@@ -92,46 +102,67 @@ impl GameCore {
                     ..
                 } => {
                     info!("Window size has changed.");
-                    Self::on_window_size_changed(&mut graphics, width as _, height as _);
+                    self.on_window_size_changed(&mut graphics, width as _, height as _);
+                }
+                Event::Suspended(suspended) => {
+                    if suspended {
+                        is_paused = true;
+                        timer.stop();
+                    } else {
+                        is_paused = false;
+                        timer.start();
+                    }
                 }
                 _ => (),
             });
 
-            is_running &= Self::update(&mut timer, app);
-            if is_running {
-                Self::render(&mut graphics, &timer, app);
+            timer.tick();
+
+            if !is_paused {
+                #[cfg(debug_assertions)]
+                {
+                    // Calculate FPS
+                    frame_count += 1;
+                    if timer.total_time() - elapsed_time >= 1.0 {
+                        let fps = frame_count;
+                        let frame_time = 1000.0 / fps as f32;
+                        window.set_title(&format!(
+                            "{} - FPS: {}, MSPF: {}",
+                            params.window_title, fps, frame_time
+                        ));
+
+                        frame_count = 0;
+                        elapsed_time += 1.0;
+                    }
+                }
+
+                self.tick(&mut graphics, &timer);
             }
         }
 
-        Self::cleanup(&mut graphics, app);
+        self.cleanup(&mut graphics);
     }
 
-    fn update(timer: &mut GameTimer, app: &mut impl GameApp) -> bool {
-        timer.tick();
+    fn tick(&mut self, graphics: &mut GraphicsCore, timer: &GameTimer) {
+        self.app.update(timer);
 
-        app.update(timer);
-
-        !app.is_done()
-    }
-
-    fn render(graphics: &mut GraphicsCore, timer: &GameTimer, app: &impl GameApp) {
         graphics.prepare();
 
         // TODO: Clearing will be part of app::render() as well
         graphics.clear();
 
-        app.render(timer);
+        self.app.render(timer);
 
         graphics.present();
     }
 
-    fn on_window_size_changed(graphics: &mut GraphicsCore, width: i32, height: i32) {
+    fn on_window_size_changed(&self, graphics: &mut GraphicsCore, width: i32, height: i32) {
         graphics.on_window_size_changed(width, height);
     }
 
-    fn cleanup(graphics: &mut GraphicsCore, app: &mut impl GameApp) {
+    fn cleanup(&mut self, graphics: &mut GraphicsCore) {
         graphics.wait_for_gpu();
-        app.cleanup();
+        self.app.destroy();
         graphics.destroy();
     }
 }

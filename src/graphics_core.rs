@@ -415,8 +415,8 @@ impl GraphicsCore {
         } else {
             trace!("Window size has changed, updating resources.");
 
-            self.back_buffer_width = width;
-            self.back_buffer_height = height;
+            self.back_buffer_width = i32::max(width, 1);
+            self.back_buffer_height = i32::max(height, 1);
             self.update_window_size_dependent_resources();
 
             info!("Swap chain resized to {}x{}.", width, height);

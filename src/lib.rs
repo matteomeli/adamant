@@ -1,7 +1,7 @@
 mod com;
 pub mod game_core;
 pub mod game_timer;
-mod graphics_core;
+pub mod graphics_core;
 
 use com::ComPtr;
 
