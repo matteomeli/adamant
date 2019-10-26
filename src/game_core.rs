@@ -1,10 +1,9 @@
 use crate::game_timer::GameTimer;
-use crate::graphics_core::GraphicsCore;
+use crate::graphics::renderer::Renderer;
 use crate::InitParams;
 
-use env_logger::{self, Env};
-
-use log::info;
+//use env_logger::{self, Env};
+//use log::info;
 
 use winit::{
     dpi::LogicalSize, Event, EventsLoop, KeyboardInput, VirtualKeyCode, Window, WindowBuilder,
@@ -13,22 +12,22 @@ use winit::{
 
 pub trait GameApp {
     fn get_params(&self) -> InitParams;
-    fn init(&mut self);
-    fn destroy(&mut self);
+    fn activate(&mut self);
+    fn deactivate(&mut self);
     fn update(&mut self, timer: &GameTimer);
     fn render(&self, timer: &GameTimer);
 }
 
 pub struct GameSystems {
     timer: GameTimer,
-    graphics: GraphicsCore,
+    renderer: Renderer,
 }
 
 impl GameSystems {
     pub fn new(window: &Window, params: &InitParams) -> Self {
         let timer = GameTimer::new();
-        let graphics = GraphicsCore::new(window, params);
-        GameSystems { timer, graphics }
+        let renderer = Renderer::new(window, params);
+        GameSystems { timer, renderer }
     }
 }
 
@@ -42,10 +41,10 @@ impl<A: GameApp> GameCore<A> {
     }
 
     pub fn run(mut self) {
-        let env = Env::default()
-            .filter_or("MY_LOG_LEVEL", "trace")
-            .write_style_or("MY_LOG_STYLE", "auto");
-        env_logger::init_from_env(env);
+        //let env = Env::default()
+        //    .filter_or("MY_LOG_LEVEL", "trace")
+        //    .write_style_or("MY_LOG_STYLE", "auto");
+        //env_logger::init_from_env(env);
 
         let params = &self.app.get_params();
 
@@ -61,10 +60,10 @@ impl<A: GameApp> GameCore<A> {
             .unwrap();
 
         let mut systems = GameSystems::new(&window, params);
-        let mut graphics = &mut systems.graphics;
+        let renderer = &mut systems.renderer;
         let timer = &mut systems.timer;
 
-        self.app.init();
+        self.app.activate();
 
         timer.reset();
 
@@ -87,22 +86,22 @@ impl<A: GameApp> GameCore<A> {
                         },
                     ..
                 } => {
-                    info!("Escape key pressed, exiting.");
+                    //info!("Escape key pressed, exiting.");
                     is_running = false;
                 }
                 Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     window_id,
                 } if window_id == window.id() => {
-                    info!("Window was closed, exiting.");
+                    //info!("Window was closed, exiting.");
                     is_running = false;
                 }
                 Event::WindowEvent {
                     event: WindowEvent::Resized(LogicalSize { width, height }),
                     ..
                 } => {
-                    info!("Window size has changed.");
-                    self.on_window_size_changed(&mut graphics, width as _, height as _);
+                    //info!("Window size has changed.");
+                    renderer.on_window_resized(width as _, height as _);
                 }
                 Event::Suspended(suspended) => {
                     if suspended {
@@ -127,7 +126,7 @@ impl<A: GameApp> GameCore<A> {
                         let fps = frame_count;
                         let frame_time = 1000.0 / fps as f32;
                         window.set_title(&format!(
-                            "{} - FPS: {}, MSPF: {}",
+                            "{} [FPS {} - {:.2}ms]",
                             params.window_title, fps, frame_time
                         ));
 
@@ -136,33 +135,17 @@ impl<A: GameApp> GameCore<A> {
                     }
                 }
 
-                self.tick(&mut graphics, &timer);
+                self.app.update(timer);
+
+                renderer.prepare();
+                renderer.clear();
+
+                self.app.render(timer);
+
+                renderer.present();
             }
         }
 
-        self.cleanup(&mut graphics);
-    }
-
-    fn tick(&mut self, graphics: &mut GraphicsCore, timer: &GameTimer) {
-        self.app.update(timer);
-
-        graphics.prepare();
-
-        // TODO: Clearing will be part of app::render() as well
-        graphics.clear();
-
-        self.app.render(timer);
-
-        graphics.present();
-    }
-
-    fn on_window_size_changed(&self, graphics: &mut GraphicsCore, width: i32, height: i32) {
-        graphics.on_window_size_changed(width, height);
-    }
-
-    fn cleanup(&mut self, graphics: &mut GraphicsCore) {
-        graphics.wait_for_gpu();
-        self.app.destroy();
-        graphics.destroy();
+        self.app.deactivate();
     }
 }

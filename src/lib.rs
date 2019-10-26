@@ -1,9 +1,8 @@
-mod com;
+#![feature(ptr_internals)]
+
 pub mod game_core;
 pub mod game_timer;
-pub mod graphics_core;
-
-use com::ComPtr;
+pub mod graphics;
 
 use bitflags::bitflags;
 

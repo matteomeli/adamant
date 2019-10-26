@@ -22,8 +22,8 @@ impl GameApp for HelloWorld {
     fn get_params(&self) -> InitParams {
         self.params.clone()
     }
-    fn init(&mut self) {}
-    fn destroy(&mut self) {}
+    fn activate(&mut self) {}
+    fn deactivate(&mut self) {}
     fn update(&mut self, _timer: &GameTimer) {}
     fn render(&self, _timer: &GameTimer) {}
 }
