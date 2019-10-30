@@ -2,23 +2,15 @@ use crate::graphics::com::ComPtr;
 use crate::graphics::device::Device;
 use crate::graphics::resource::GpuResource;
 
-use winapi::shared::{
-    dxgiformat, dxgitype,
-    winerror::{HRESULT, SUCCEEDED},
-};
+use winapi::shared::{dxgiformat, dxgitype, winerror::SUCCEEDED};
 use winapi::um::d3d12;
 use winapi::Interface;
 
 use std::ptr;
 
+#[derive(Debug)]
 pub enum Error {
-    CreateFailed(HRESULT),
-}
-
-impl std::fmt::Debug for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Failed to allocate memory.")
-    }
+    MemoryCreateFailed,
 }
 
 #[derive(Copy, Clone)]
@@ -32,7 +24,7 @@ pub struct Memory {
 }
 
 impl Memory {
-    pub fn new(device: &Device, alloc_type: AllocationType, size: u64) -> Result<Self, Error> {
+    pub fn new(device: &Device, type_: AllocationType, size: u64) -> Result<Self, Error> {
         let mut resource = ComPtr::<d3d12::ID3D12Resource>::empty();
         let resource_desc = d3d12::D3D12_RESOURCE_DESC {
             Alignment: 0,
@@ -70,37 +62,37 @@ impl Memory {
                 Ok(Memory {
                     resource: GpuResource::create(
                         resource,
-                        match alloc_type {
+                        match type_ {
                             AllocationType::GpuOnly => d3d12::D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                             AllocationType::CpuWritable => d3d12::D3D12_RESOURCE_STATE_GENERIC_READ,
                         },
                     ),
                 })
             } else {
-                Err(Error::CreateFailed(hr))
+                Err(Error::MemoryCreateFailed)
             }
         }
     }
 }
 
-pub struct MemoryAllocator<'a> {
-    device: &'a Device,
+pub struct MemoryAllocator {
+    device: Device,
     allocations: Vec<Memory>,
-    allocation_type: AllocationType,
+    type_: AllocationType,
 }
 
-impl<'a> MemoryAllocator<'a> {
-    pub fn new(device: &'a Device, allocation_type: AllocationType) -> Self {
+impl MemoryAllocator {
+    pub fn new(device: Device, type_: AllocationType) -> Self {
         MemoryAllocator {
             device,
             allocations: Vec::new(),
-            allocation_type,
+            type_,
         }
     }
 
     // Just 1-2-1 allocation with required memory for a resource now, no fancy memory management
     pub fn allocate(&mut self, size: u64) -> &Memory {
-        let allocation = Memory::new(self.device, self.allocation_type, size).unwrap();
+        let allocation = Memory::new(&self.device, self.type_, size).unwrap();
         self.allocations.push(allocation);
         self.allocations.last().unwrap()
     }

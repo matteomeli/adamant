@@ -9,4 +9,4 @@ bitflags = "1.0"
 env_logger = "0.6.2"
 log = "0.4"
 winapi = { version = "0.3.8", features = ["d3d12", "d3d12sdklayers", "d3dcommon", "d3dcompiler", "dxgi", "dxgi1_2", "dxgi1_3", "dxgi1_4", "dxgi1_5", "dxgi1_6", "dxgidebug", "dxgitype", "minwindef", "synchapi", "unknwnbase", "winerror", "windef", "winnt"] }
-winit = "0.19.3"
+winit = "0.20.0-alpha4"

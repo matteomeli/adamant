@@ -13,18 +13,18 @@ pub enum Error {
     DescriptorHeapSetNameFailed,
 }
 
-pub type CPUDescriptor = d3d12::D3D12_CPU_DESCRIPTOR_HANDLE;
+pub type CpuDescriptor = d3d12::D3D12_CPU_DESCRIPTOR_HANDLE;
 
 pub struct DescriptorHeap {
     _native: ComPtr<d3d12::ID3D12DescriptorHeap>,
     pub(crate) descriptor_size: u32,
-    next_cpu_handle: CPUDescriptor,
+    next_descriptor: CpuDescriptor,
 }
 
 impl DescriptorHeap {
     pub fn new(
         device: &Device,
-        descriptor_heap_type: d3d12::D3D12_DESCRIPTOR_HEAP_TYPE,
+        type_: d3d12::D3D12_DESCRIPTOR_HEAP_TYPE,
         flags: d3d12::D3D12_DESCRIPTOR_HEAP_FLAGS,
         descriptors_count: u32,
         debug_name: &str,
@@ -32,7 +32,7 @@ impl DescriptorHeap {
         let mut descriptor_heap = ComPtr::<d3d12::ID3D12DescriptorHeap>::empty();
         let desc = d3d12::D3D12_DESCRIPTOR_HEAP_DESC {
             NumDescriptors: descriptors_count,
-            Type: descriptor_heap_type,
+            Type: type_,
             Flags: flags,
             ..unsafe { mem::zeroed() }
         };
@@ -57,24 +57,20 @@ impl DescriptorHeap {
             }
         }
 
-        let next_cpu_handle = unsafe { descriptor_heap.GetCPUDescriptorHandleForHeapStart() };
-        let descriptor_size = unsafe {
-            device
-                .native
-                .GetDescriptorHandleIncrementSize(descriptor_heap_type)
-        };
+        let next_descriptor = unsafe { descriptor_heap.GetCPUDescriptorHandleForHeapStart() };
+        let descriptor_size = unsafe { device.native.GetDescriptorHandleIncrementSize(type_) };
 
         Ok(DescriptorHeap {
             _native: descriptor_heap,
             descriptor_size,
-            next_cpu_handle,
+            next_descriptor,
         })
     }
 
-    pub fn allocate_cpu(&mut self, count: u32) -> CPUDescriptor {
-        let handle = self.next_cpu_handle;
-        self.next_cpu_handle = CPUDescriptor {
-            ptr: self.next_cpu_handle.ptr + (count * self.descriptor_size) as usize,
+    pub fn allocate_cpu(&mut self, count: u32) -> CpuDescriptor {
+        let handle = self.next_descriptor;
+        self.next_descriptor = CpuDescriptor {
+            ptr: self.next_descriptor.ptr + (count * self.descriptor_size) as usize,
         };
         handle
     }
@@ -82,33 +78,33 @@ impl DescriptorHeap {
 
 const DESCRIPTOR_HEAP_SIZE: u32 = 256;
 
-pub struct DescriptorAllocator {
+pub struct CpuDescriptorPool {
     device: Device,
-    heap_type: d3d12::D3D12_DESCRIPTOR_HEAP_TYPE,
+    type_: d3d12::D3D12_DESCRIPTOR_HEAP_TYPE,
     heaps: Vec<DescriptorHeap>,
     current_heap_id: Option<usize>,
     free_descriptors_count: u32,
 }
 
-impl DescriptorAllocator {
-    pub fn new(device: Device, heap_type: d3d12::D3D12_DESCRIPTOR_HEAP_TYPE) -> Self {
-        DescriptorAllocator {
-            device,
-            heap_type,
+impl CpuDescriptorPool {
+    pub fn new(device: &Device, type_: d3d12::D3D12_DESCRIPTOR_HEAP_TYPE) -> Self {
+        CpuDescriptorPool {
+            device: device.clone(),
+            type_,
             heaps: Vec::new(),
             current_heap_id: None,
             free_descriptors_count: DESCRIPTOR_HEAP_SIZE,
         }
     }
 
-    pub fn allocate_many(&mut self, count: u32) -> CPUDescriptor {
+    pub fn allocate_many(&mut self, count: u32) -> CpuDescriptor {
         let heap_id = if self.current_heap_id.is_none() || count > self.free_descriptors_count {
             // Allocate a new heap here
             let id = self.heaps.len();
             self.heaps.push(
                 DescriptorHeap::new(
                     &self.device,
-                    self.heap_type,
+                    self.type_,
                     d3d12::D3D12_DESCRIPTOR_HEAP_FLAG_NONE, /* no need to be shader visible */
                     DESCRIPTOR_HEAP_SIZE,
                     &format!("Adamant::DescriptorHeap{}", id),
@@ -129,7 +125,7 @@ impl DescriptorAllocator {
         descriptor
     }
 
-    pub fn allocate(&mut self) -> CPUDescriptor {
+    pub fn allocate(&mut self) -> CpuDescriptor {
         self.allocate_many(1)
     }
 }

@@ -12,7 +12,7 @@ pub enum GpuResourceError {
 
 pub struct GpuResource {
     pub(crate) native: ComPtr<d3d12::ID3D12Resource>,
-    _usage_state: d3d12::D3D12_RESOURCE_STATES,
+    pub(crate) usage_state: d3d12::D3D12_RESOURCE_STATES,
 }
 
 impl GpuResource {
@@ -22,7 +22,7 @@ impl GpuResource {
     ) -> Self {
         GpuResource {
             native: resource,
-            _usage_state: state,
+            usage_state: state,
         }
     }
 

@@ -11,7 +11,7 @@ use winapi::Interface;
 use std::ptr;
 
 #[repr(u32)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub enum CommandListType {
     Direct = d3d12::D3D12_COMMAND_LIST_TYPE_DIRECT,
     Compute = d3d12::D3D12_COMMAND_LIST_TYPE_COMPUTE,
@@ -33,16 +33,16 @@ pub struct GraphicsCommandList(pub(crate) ComPtr<d3d12::ID3D12GraphicsCommandLis
 impl GraphicsCommandList {
     pub fn new(
         device: &Device,
-        command_allocator: &CommandAllocator,
-        command_list_type: CommandListType,
+        allocator: &CommandAllocator,
+        type_: CommandListType,
         debug_name: &str,
     ) -> Result<Self, Error> {
         let mut command_list = ComPtr::<d3d12::ID3D12GraphicsCommandList>::empty();
         let mut hr = unsafe {
             device.native.CreateCommandList(
                 0,
-                command_list_type as _,
-                command_allocator.0.as_ptr_mut(),
+                type_ as _,
+                allocator.native.as_ptr_mut(),
                 ptr::null_mut(),
                 &d3d12::ID3D12GraphicsCommandList::uuidof(),
                 command_list.as_mut_void(),
@@ -94,7 +94,7 @@ impl GraphicsCommandList {
     pub fn reset(&self, command_allocator: &CommandAllocator) -> Result<(), Error> {
         let hr = unsafe {
             self.0
-                .Reset(command_allocator.0.as_ptr_mut(), ptr::null_mut())
+                .Reset(command_allocator.native.as_ptr_mut(), ptr::null_mut())
         };
         if SUCCEEDED(hr) {
             Ok(())

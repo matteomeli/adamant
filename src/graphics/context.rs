@@ -2,12 +2,12 @@ use crate::graphics::com::ComPtr;
 use crate::graphics::command::{
     CommandAllocator, CommandListType, CommandQueue, GraphicsCommandList,
 };
-use crate::graphics::descriptor::{CPUDescriptor, DescriptorAllocator};
+use crate::graphics::descriptor::{CpuDescriptor, CpuDescriptorPool};
 use crate::graphics::device::Device;
 use crate::graphics::dxgi::{Adapter, Factory, Swapchain, SwapchainProperties};
 use crate::graphics::resource::GpuResource;
 
-use crate::{InitFlags, InitParams};
+use crate::{ContextFlags, ContextParams};
 
 use log::{info, trace, warn};
 
@@ -18,16 +18,14 @@ use winapi::shared::{
 use winapi::um::{d3d12, d3d12sdklayers, d3dcommon, dxgidebug};
 use winapi::Interface;
 
-use winit::Window;
-
-#[cfg(target_os = "windows")]
-use winit::os::windows::WindowExt;
+use winit::platform::windows::WindowExtWindows;
+use winit::window::Window;
 
 use std::convert::TryInto;
 use std::mem::{self, ManuallyDrop};
 use std::ptr;
 
-pub struct Renderer {
+pub struct Context {
     factory: ManuallyDrop<Factory>,
     device: ManuallyDrop<Device>,
     command_queue: ManuallyDrop<CommandQueue>,
@@ -35,11 +33,11 @@ pub struct Renderer {
     command_list: ManuallyDrop<GraphicsCommandList>,
     swapchain: ManuallyDrop<Swapchain>,
     descriptor_allocator:
-        ManuallyDrop<[DescriptorAllocator; d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES as _]>,
+        ManuallyDrop<[CpuDescriptorPool; d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES as _]>,
     render_targets: ManuallyDrop<Vec<GpuResource>>,
     depth_stencil: ManuallyDrop<GpuResource>,
-    rtv_descriptors: Vec<CPUDescriptor>,
-    dsv_descriptor: CPUDescriptor,
+    rtv_descriptors: Vec<CpuDescriptor>,
+    dsv_descriptor: CpuDescriptor,
     screen_viewport: d3d12::D3D12_VIEWPORT,
     scissor_rect: d3d12::D3D12_RECT,
     color_space: dxgitype::DXGI_COLOR_SPACE_TYPE,
@@ -49,12 +47,12 @@ pub struct Renderer {
     back_buffer_width: u32,
     back_buffer_height: u32,
     back_buffer_index: u32,
-    flags: InitFlags,
+    flags: ContextFlags,
 }
 
-impl Renderer {
-    pub fn new(window: &Window, params: &InitParams) -> Self {
-        let window_handle = window.get_hwnd() as *mut _;
+impl Context {
+    pub fn new(window: &Window, params: &ContextParams) -> Self {
+        let window_handle = window.hwnd() as *mut _;
 
         // Enable debug layer.
         let factory_flags = Self::enable_debug_layer();
@@ -65,7 +63,7 @@ impl Renderer {
 
         // Determine if tearing is supported for fullscreen borderless windows.
         let mut flags = params.flags;
-        if params.flags.contains(InitFlags::ALLOW_TEARING) {
+        if params.flags.contains(ContextFlags::ALLOW_TEARING) {
             let mut allow_tearing_feature = minwindef::FALSE;
             let check = factory.check_feature_support(
                 dxgi1_5::DXGI_FEATURE_PRESENT_ALLOW_TEARING,
@@ -73,7 +71,7 @@ impl Renderer {
                 mem::size_of::<minwindef::BOOL>() as _,
             );
             if check.is_err() || allow_tearing_feature == minwindef::FALSE {
-                flags.remove(InitFlags::ALLOW_TEARING);
+                flags.remove(ContextFlags::ALLOW_TEARING);
             }
         }
 
@@ -95,14 +93,8 @@ impl Renderer {
         // Create a command allocator for each render target that will be rendered to.
         let mut command_allocators = Vec::with_capacity(params.back_buffer_count as usize);
         for n in 0..params.back_buffer_count {
-            command_allocators.push(
-                CommandAllocator::new(
-                    &device,
-                    CommandListType::Direct,
-                    &format!("Adamant::CommandAllocator{}", n),
-                )
-                .unwrap(),
-            );
+            command_allocators
+                .push(CommandAllocator::new(&device, CommandListType::Direct, n as _).unwrap());
         }
 
         // Create a command list for recording graphics commands.
@@ -132,7 +124,7 @@ impl Renderer {
                 back_buffer_width: params.window_width,
                 back_buffer_height: params.window_height,
                 back_buffer_format,
-                is_tearing_supported: flags.contains(InitFlags::ALLOW_TEARING),
+                is_tearing_supported: flags.contains(ContextFlags::ALLOW_TEARING),
             },
         )
         .unwrap();
@@ -142,17 +134,14 @@ impl Renderer {
 
         // Handle HDR output.
         let color_space = swapchain
-            .compute_color_space(back_buffer_format, flags.contains(InitFlags::ENABLE_HDR));
+            .compute_color_space(back_buffer_format, flags.contains(ContextFlags::ENABLE_HDR));
 
         // Create cpu descriptor allocator.
         let mut descriptor_allocator = [
-            DescriptorAllocator::new(
-                device.clone(),
-                d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-            ),
-            DescriptorAllocator::new(device.clone(), d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER),
-            DescriptorAllocator::new(device.clone(), d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_RTV),
-            DescriptorAllocator::new(device.clone(), d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_DSV),
+            CpuDescriptorPool::new(&device, d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+            CpuDescriptorPool::new(&device, d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER),
+            CpuDescriptorPool::new(&device, d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_RTV),
+            CpuDescriptorPool::new(&device, d3d12::D3D12_DESCRIPTOR_HEAP_TYPE_DSV),
         ];
 
         // Create render targets for each bak buffer.
@@ -189,7 +178,7 @@ impl Renderer {
             bottom: params.window_height as _,
         };
 
-        Renderer {
+        Context {
             factory: ManuallyDrop::new(factory),
             device: ManuallyDrop::new(device),
             command_queue: ManuallyDrop::new(command_queue),
@@ -289,7 +278,7 @@ impl Renderer {
                 .native
                 .ExecuteCommandLists(command_lists.len() as _, command_lists.as_ptr());
 
-            let hr = if self.flags.contains(InitFlags::ALLOW_TEARING) {
+            let hr = if self.flags.contains(ContextFlags::ALLOW_TEARING) {
                 // Recommended to always use tearing if supported when using a sync interval of 0.
                 // Note this will fail if in true 'fullscreen' mode.
                 self.swapchain
@@ -347,7 +336,7 @@ impl Renderer {
                     self.back_buffer_width.try_into().unwrap(),
                     self.back_buffer_height.try_into().unwrap(),
                     self.back_buffer_format,
-                    if self.flags.contains(InitFlags::ALLOW_TEARING) {
+                    if self.flags.contains(ContextFlags::ALLOW_TEARING) {
                         dxgi::DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
                     } else {
                         0
@@ -374,7 +363,7 @@ impl Renderer {
             // Handle HDR output
             self.color_space = self.swapchain.compute_color_space(
                 self.back_buffer_format,
-                self.flags.contains(InitFlags::ENABLE_HDR),
+                self.flags.contains(ContextFlags::ENABLE_HDR),
             );
 
             // Create render targets for each back buffer.
@@ -487,10 +476,10 @@ impl Renderer {
     fn create_render_targets(
         device: &Device,
         swapchain: &Swapchain,
-        descriptor_allocator: &mut DescriptorAllocator,
+        descriptor_allocator: &mut CpuDescriptorPool,
         back_buffer_format: dxgiformat::DXGI_FORMAT,
         back_buffer_count: u32,
-    ) -> (Vec<GpuResource>, Vec<CPUDescriptor>) {
+    ) -> (Vec<GpuResource>, Vec<CpuDescriptor>) {
         let mut render_targets = Vec::with_capacity(back_buffer_count as _);
         let mut rtv_descriptors = Vec::with_capacity(back_buffer_count as _);
         unsafe {
@@ -541,11 +530,11 @@ impl Renderer {
 
     fn create_depth_stencil(
         device: &Device,
-        descriptor_allocator: &mut DescriptorAllocator,
+        descriptor_allocator: &mut CpuDescriptorPool,
         depth_buffer_format: dxgiformat::DXGI_FORMAT,
         back_buffer_width: u32,
         back_buffer_height: u32,
-    ) -> (GpuResource, CPUDescriptor) {
+    ) -> (GpuResource, CpuDescriptor) {
         trace!("Creating D3D12 depth stencil buffer.");
         let dsv_descriptor = descriptor_allocator.allocate();
         let depth_heap_properties = d3d12::D3D12_HEAP_PROPERTIES {
@@ -623,7 +612,7 @@ impl Renderer {
     }
 }
 
-impl Drop for Renderer {
+impl Drop for Context {
     fn drop(&mut self) {
         // Wait for GPU to finish all work.
         self.command_queue.flush().unwrap();

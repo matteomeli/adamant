@@ -1,11 +1,15 @@
 use crate::graphics::com::ComPtr;
-use crate::graphics::command::{CommandList, CommandListType};
+use crate::graphics::command::{
+    CommandAllocator, CommandAllocatorPool, CommandList, CommandListType, GraphicsCommandList,
+};
 use crate::graphics::device::Device;
 use crate::graphics::sync::{Event, Fence};
 
 use winapi::shared::winerror::{FAILED, SUCCEEDED};
 use winapi::um::d3d12;
 use winapi::Interface;
+
+use std::cell::RefCell;
 
 #[derive(Debug)]
 pub enum Error {
@@ -16,21 +20,23 @@ pub enum Error {
 }
 
 pub struct CommandQueue {
+    device: Device,
     pub(crate) native: ComPtr<d3d12::ID3D12CommandQueue>,
+    command_allocator_pool: RefCell<CommandAllocatorPool>,
     fence: Fence,
-    fence_value: u64,
+    pub(crate) fence_value: u64,
 }
 
 impl CommandQueue {
     pub fn new(
         device: &Device,
-        command_list_type: CommandListType,
+        type_: CommandListType,
         flags: d3d12::D3D12_COMMAND_QUEUE_FLAGS,
         debug_name: &str,
     ) -> Result<Self, Error> {
         let mut queue = ComPtr::<d3d12::ID3D12CommandQueue>::empty();
         let desc = d3d12::D3D12_COMMAND_QUEUE_DESC {
-            Type: command_list_type as _,
+            Type: type_ as _,
             Priority: d3d12::D3D12_COMMAND_QUEUE_PRIORITY_NORMAL as _,
             Flags: flags,
             NodeMask: 0,
@@ -55,10 +61,40 @@ impl CommandQueue {
         }
 
         Ok(CommandQueue {
+            device: device.clone(),
             native: queue,
+            command_allocator_pool: RefCell::new(CommandAllocatorPool::new(device.clone(), type_)),
             fence: Fence::new(device).unwrap(),
             fence_value: 0,
         })
+    }
+
+    pub fn request_allocator(&self) -> CommandAllocator {
+        self.command_allocator_pool
+            .borrow_mut()
+            .request(self.fence.get_value())
+            .clone()
+    }
+
+    pub fn free_allocator(&self, command_allocator: CommandAllocator) {
+        self.command_allocator_pool
+            .borrow_mut()
+            .free(self.fence.get_value(), command_allocator);
+    }
+
+    pub fn create_command_list(&mut self) -> (GraphicsCommandList, CommandAllocator) {
+        let command_allocator = self.request_allocator();
+        let device = &self.device;
+        (
+            GraphicsCommandList::new(
+                device,
+                &command_allocator,
+                CommandListType::Direct,
+                "Adamant::CommandList",
+            )
+            .unwrap(),
+            command_allocator,
+        )
     }
 
     pub fn execute_command_list(&self, command_list: CommandList) {
@@ -89,16 +125,7 @@ impl CommandQueue {
         }
     }
 
-    pub fn flush(&mut self) -> Result<(), Error> {
-        self.fence_value += 1;
-        let hr = unsafe {
-            self.native
-                .Signal(self.fence.0.as_ptr_mut(), self.fence_value)
-        };
-        if FAILED(hr) {
-            return Err(Error::CommandQueueSignalFailed);
-        }
-
+    pub fn wait_for_fence(&self) -> Result<(), Error> {
         if self.fence.get_value() < self.fence_value {
             let event = Event::new();
             self.fence
@@ -111,5 +138,14 @@ impl CommandQueue {
         } else {
             Ok(())
         }
+    }
+
+    pub fn flush(&mut self) -> Result<(), Error> {
+        self.signal_fence().unwrap();
+        self.wait_for_fence()
+    }
+
+    pub fn is_fence_complete(&self, fence_value: u64) -> bool {
+        fence_value <= self.fence.get_value()
     }
 }

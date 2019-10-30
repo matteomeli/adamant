@@ -1,57 +1,144 @@
 use crate::graphics::buffer::BufferCopyRegion;
-use crate::graphics::command::CommandAllocator;
-use crate::graphics::command::{CommandListType, GraphicsCommandList};
+use crate::graphics::command::{
+    CommandAllocator, CommandListType, CommandQueue, GraphicsCommandList,
+};
+use crate::graphics::descriptor::CpuDescriptor;
 use crate::graphics::device::Device;
 use crate::graphics::memory::{AllocationType, MemoryAllocator};
 use crate::graphics::resource::GpuResource;
 
+use winapi::shared::minwindef;
 use winapi::um::d3d12;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::mem;
 use std::ptr;
 
-pub struct CommandContextManager {}
-
-impl CommandContextManager {}
-
-pub struct CommandContext<'a> {
-    resource_barriers: RefCell<Vec<d3d12::D3D12_RESOURCE_BARRIER>>,
-    command_list: RefCell<GraphicsCommandList>,
-    allocator: RefCell<MemoryAllocator<'a>>,
+pub struct CommandContextPool {
+    device: Device,
+    pool: HashMap<CommandListType, Vec<CommandContext>>,
+    free_list: HashMap<CommandListType, Vec<usize>>,
 }
 
-impl<'a> CommandContext<'a> {
-    pub fn begin(
-        device: &'a Device,
+impl CommandContextPool {
+    pub fn new(device: Device) -> Self {
+        CommandContextPool {
+            device,
+            pool: HashMap::new(),
+            free_list: HashMap::new(),
+        }
+    }
+
+    pub fn request(
+        &mut self,
+        type_: CommandListType,
         command_allocator: &CommandAllocator,
-        command_list_type: CommandListType,
-        id: &str,
+    ) -> &CommandContext {
+        if !self.free_list.contains_key(&type_) {
+            let command_contexts = self.pool.entry(type_).or_insert_with(Vec::new);
+            let id = command_contexts.len();
+            let command_context = CommandContext::new(&self.device, command_allocator, type_, id);
+            command_contexts.push(command_context);
+            command_contexts.last().unwrap()
+        } else {
+            let free_list = self.free_list.get_mut(&type_).unwrap();
+            let context_id = free_list.pop().unwrap();
+            let command_contexts = self.pool.get(&type_).unwrap();
+            let command_context = &command_contexts[context_id];
+            command_context.reset();
+            command_context
+        }
+    }
+
+    pub fn free(&mut self, command_context: &CommandContext) {
+        let free_list = self
+            .free_list
+            .entry(command_context.type_)
+            .or_insert_with(Vec::new);
+        free_list.push(command_context.id);
+    }
+}
+
+pub struct CommandContext {
+    resource_barriers: RefCell<Vec<d3d12::D3D12_RESOURCE_BARRIER>>,
+    command_list: RefCell<GraphicsCommandList>,
+    cpu_memory_allocator: RefCell<MemoryAllocator>,
+    pub(crate) type_: CommandListType,
+    pub(crate) id: usize,
+}
+
+impl CommandContext {
+    pub fn new(
+        device: &Device,
+        allocator: &CommandAllocator,
+        type_: CommandListType,
+        id: usize,
     ) -> Self {
         CommandContext {
             resource_barriers: RefCell::new(Vec::new()),
             command_list: RefCell::new(
                 GraphicsCommandList::new(
                     &device,
-                    command_allocator,
-                    command_list_type,
+                    allocator,
+                    type_,
                     &format!("Adamant::CommandContext_{}::CommandList", id),
                 )
                 .unwrap(),
             ),
-            allocator: RefCell::new(MemoryAllocator::new(&device, AllocationType::CpuWritable)),
+            cpu_memory_allocator: RefCell::new(MemoryAllocator::new(
+                device.clone(),
+                AllocationType::CpuWritable,
+            )),
+            type_,
+            id,
         }
     }
 
-    pub fn end(&self, _wait_for_completion: bool) {
+    pub fn begin(&self) {}
+
+    pub fn flush(
+        &self,
+        command_queue: &mut CommandQueue,
+        command_allocator: CommandAllocator,
+        wait_for_completion: bool,
+    ) {
         self.flush_resource_barriers();
 
-        // TODO
-        // Queue execute command list
-        // Queue discard allocator
-        // Cleanup allocated memory, so we need to track it when we do
-        // Wait for fence
+        command_queue.execute_command_list(self.command_list.borrow().as_command_list());
+        command_queue.signal_fence().unwrap();
+
+        if wait_for_completion {
+            command_queue.wait_for_fence().unwrap();
+        }
+
+        self.command_list
+            .borrow()
+            .reset(&command_allocator)
+            .unwrap();
     }
+
+    pub fn end(
+        &self,
+        command_queue: &mut CommandQueue,
+        command_allocator: CommandAllocator,
+        command_context_pool: &mut CommandContextPool,
+        wait_for_completion: bool,
+    ) {
+        self.flush_resource_barriers();
+
+        command_queue.execute_command_list(self.command_list.borrow().as_command_list());
+        command_queue.signal_fence().unwrap();
+        command_queue.free_allocator(command_allocator);
+
+        if wait_for_completion {
+            command_queue.wait_for_fence().unwrap();
+        }
+
+        command_context_pool.free(&self);
+    }
+
+    pub fn reset(&self) {}
 
     pub fn transition_resource(
         &self,
@@ -90,23 +177,36 @@ impl<'a> CommandContext<'a> {
             .insert_resource_barriers(&self.resource_barriers.borrow());
     }
 
+    pub fn set_render_targets(
+        &self,
+        rtv_descriptors: &[CpuDescriptor],
+        dsv_descriptor: CpuDescriptor,
+    ) {
+        unsafe {
+            self.command_list.borrow().0.OMSetRenderTargets(
+                rtv_descriptors.len() as _,
+                rtv_descriptors.as_ptr(),
+                minwindef::FALSE,
+                &dsv_descriptor,
+            );
+        }
+    }
+
     pub fn init_buffer(
-        device: &Device,
-        command_allocator: &CommandAllocator,
+        command_queue: &mut CommandQueue,
+        command_allocator: CommandAllocator,
+        command_context_pool: &mut CommandContextPool,
+        pool: &mut CommandContextPool,
         dest: &mut GpuResource,
         data: ptr::NonNull<u8>,
         size: u64,
         offset: u64,
     ) {
-        let init_context = CommandContext::begin(
-            device,
-            command_allocator,
-            CommandListType::Direct,
-            "InitBuffer",
-        );
+        let init_context = pool.request(CommandListType::Direct, &command_allocator);
+        init_context.begin();
 
         // Upload buffer data into GPU memory
-        let mut allocator = init_context.allocator.borrow_mut();
+        let mut allocator = init_context.cpu_memory_allocator.borrow_mut();
         let memory = allocator.allocate(size);
         unsafe {
             let mapping = memory.resource.map().unwrap();
@@ -127,6 +227,6 @@ impl<'a> CommandContext<'a> {
         );
         init_context.transition_resource(dest, d3d12::D3D12_RESOURCE_STATE_GENERIC_READ, true);
 
-        init_context.end(true);
+        init_context.end(command_queue, command_allocator, command_context_pool, true);
     }
 }

@@ -10,7 +10,7 @@ mod memory;
 mod resource;
 mod sync;
 
-pub mod renderer;
+pub mod context;
 
 /*
 pub mod pso;

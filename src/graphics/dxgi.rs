@@ -68,15 +68,14 @@ impl Factory {
 
     pub fn check_feature_support(
         &self,
-        feature_type: dxgi1_5::DXGI_FEATURE,
-        feature_data: *mut c_void,
-        feature_size: usize,
+        type_: dxgi1_5::DXGI_FEATURE,
+        data: *mut c_void,
+        size: usize,
     ) -> Result<(), Error> {
         unsafe {
             match self.native.cast::<dxgi1_5::IDXGIFactory5>() {
                 Ok(factory5) => {
-                    let hr =
-                        factory5.CheckFeatureSupport(feature_type, feature_data, feature_size as _);
+                    let hr = factory5.CheckFeatureSupport(type_, data, size as _);
                     if SUCCEEDED(hr) {
                         Ok(())
                     } else {
@@ -251,12 +250,12 @@ impl Adapter {
 }
 
 pub struct SwapchainProperties {
-    pub window_handle: HWND,
-    pub back_buffer_count: u32,
-    pub back_buffer_width: u32,
-    pub back_buffer_height: u32,
-    pub back_buffer_format: dxgiformat::DXGI_FORMAT,
-    pub is_tearing_supported: bool,
+    pub(crate) window_handle: HWND,
+    pub(crate) back_buffer_count: u32,
+    pub(crate) back_buffer_width: u32,
+    pub(crate) back_buffer_height: u32,
+    pub(crate) back_buffer_format: dxgiformat::DXGI_FORMAT,
+    pub(crate) is_tearing_supported: bool,
 }
 
 pub struct Swapchain(pub(crate) ComPtr<dxgi1_5::IDXGISwapChain4>);
