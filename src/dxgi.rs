@@ -1,5 +1,5 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::command::CommandQueue;
+use crate::com::ComPtr;
+use crate::command::CommandQueue;
 
 use winapi::ctypes::c_void;
 use winapi::shared::{

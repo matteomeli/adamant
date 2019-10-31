@@ -1,5 +1,5 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::device::Device;
+use crate::com::ComPtr;
+use crate::device::Device;
 
 use winapi::shared::winerror::{self, SUCCEEDED};
 use winapi::um::{d3d12, handleapi, synchapi, winbase, winnt};

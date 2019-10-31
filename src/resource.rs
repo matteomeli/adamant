@@ -1,4 +1,4 @@
-use crate::graphics::com::ComPtr;
+use crate::com::ComPtr;
 
 use winapi::shared::winerror::SUCCEEDED;
 use winapi::um::d3d12;

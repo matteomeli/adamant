@@ -1,6 +1,6 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::root_signature::RootSignature;
-use crate::graphics::{Blob, Device};
+use crate::com::ComPtr;
+use crate::root_signature::RootSignature;
+use crate::{Blob, Device};
 
 use winapi::shared::{
     dxgiformat, dxgitype,

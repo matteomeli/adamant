@@ -1,5 +1,5 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::dxgi::Adapter;
+use crate::com::ComPtr;
+use crate::dxgi::Adapter;
 
 use winapi::shared::{
     minwindef,

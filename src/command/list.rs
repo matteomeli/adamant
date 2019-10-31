@@ -1,8 +1,8 @@
-use crate::graphics::buffer::BufferCopyRegion;
-use crate::graphics::com::ComPtr;
-use crate::graphics::command::CommandAllocator;
-use crate::graphics::device::Device;
-use crate::graphics::resource::GpuResource;
+use crate::buffer::BufferCopyRegion;
+use crate::com::ComPtr;
+use crate::command::CommandAllocator;
+use crate::device::Device;
+use crate::resource::GpuResource;
 
 use winapi::shared::winerror::{FAILED, SUCCEEDED};
 use winapi::um::d3d12;

@@ -8,6 +8,7 @@ use std::mem;
 use std::ops::Deref;
 use std::ptr;
 
+#[repr(transparent)]
 pub struct ComPtr<T>(*mut T);
 
 impl<T> ComPtr<T> {

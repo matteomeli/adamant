@@ -1,6 +1,6 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::device::Device;
-use crate::graphics::resource::GpuResource;
+use crate::com::ComPtr;
+use crate::device::Device;
+use crate::resource::GpuResource;
 
 use winapi::shared::{dxgiformat, dxgitype, winerror::SUCCEEDED};
 use winapi::um::d3d12;

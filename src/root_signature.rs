@@ -1,5 +1,5 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::{Blob, Device};
+use crate::com::ComPtr;
+use crate::{Blob, Device};
 
 use winapi::shared::winerror::FAILED;
 use winapi::um::d3d12;

@@ -1,9 +1,9 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::command::{
+use crate::com::ComPtr;
+use crate::command::{
     CommandAllocator, CommandAllocatorPool, CommandList, CommandListType, GraphicsCommandList,
 };
-use crate::graphics::device::Device;
-use crate::graphics::sync::{Event, Fence};
+use crate::device::Device;
+use crate::sync::{Event, Fence};
 
 use winapi::shared::winerror::{FAILED, SUCCEEDED};
 use winapi::um::d3d12;

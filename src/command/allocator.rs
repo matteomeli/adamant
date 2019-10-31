@@ -1,6 +1,6 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::command::CommandListType;
-use crate::graphics::device::Device;
+use crate::com::ComPtr;
+use crate::command::CommandListType;
+use crate::device::Device;
 
 use winapi::shared::winerror::{FAILED, SUCCEEDED};
 use winapi::um::d3d12;

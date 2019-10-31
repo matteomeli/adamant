@@ -1,11 +1,9 @@
-use crate::graphics::buffer::BufferCopyRegion;
-use crate::graphics::command::{
-    CommandAllocator, CommandListType, CommandQueue, GraphicsCommandList,
-};
-use crate::graphics::descriptor::CpuDescriptor;
-use crate::graphics::device::Device;
-use crate::graphics::memory::{AllocationType, MemoryAllocator};
-use crate::graphics::resource::GpuResource;
+use crate::buffer::BufferCopyRegion;
+use crate::command::{CommandAllocator, CommandListType, CommandQueue, GraphicsCommandList};
+use crate::descriptor::CpuDescriptor;
+use crate::device::Device;
+use crate::memory::{AllocationType, MemoryAllocator};
+use crate::resource::GpuResource;
 
 use winapi::shared::minwindef;
 use winapi::um::d3d12;

@@ -1,15 +1,29 @@
 #![feature(ptr_internals)]
 
-pub mod graphics;
-pub mod timer;
+use winapi::shared::dxgiformat;
+use winapi::um::d3dcommon;
 
-pub use self::graphics::context::Context;
+mod buffer;
+mod com;
+mod command;
+mod context;
+mod descriptor;
+mod device;
+mod dxgi;
+mod memory;
+mod resource;
+mod sync;
+mod timer;
+
+/*
+mod pso;
+mod root_signature;
+*/
+
+pub use self::context::Context;
 pub use self::timer::GameTimer;
 
 use bitflags::bitflags;
-
-use winapi::shared::dxgiformat;
-use winapi::um::d3dcommon;
 
 bitflags! {
     pub struct ContextFlags: u32 {
@@ -49,3 +63,5 @@ impl ContextParams {
         }
     }
 }
+
+pub type Blob = self::com::ComPtr<d3dcommon::ID3DBlob>;

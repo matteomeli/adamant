@@ -1,11 +1,9 @@
-use crate::graphics::com::ComPtr;
-use crate::graphics::command::{
-    CommandAllocator, CommandListType, CommandQueue, GraphicsCommandList,
-};
-use crate::graphics::descriptor::{CpuDescriptor, CpuDescriptorPool};
-use crate::graphics::device::Device;
-use crate::graphics::dxgi::{Adapter, Factory, Swapchain, SwapchainProperties};
-use crate::graphics::resource::GpuResource;
+use crate::com::ComPtr;
+use crate::command::{CommandAllocator, CommandListType, CommandQueue, GraphicsCommandList};
+use crate::descriptor::{CpuDescriptor, CpuDescriptorPool};
+use crate::device::Device;
+use crate::dxgi::{Adapter, Factory, Swapchain, SwapchainProperties};
+use crate::resource::GpuResource;
 
 use crate::{ContextFlags, ContextParams};
 
