@@ -11,14 +11,11 @@ mod descriptor;
 mod device;
 mod dxgi;
 mod memory;
+mod pso;
 mod resource;
+mod root_signature;
 mod sync;
 mod timer;
-
-/*
-mod pso;
-mod root_signature;
-*/
 
 pub use self::context::Context;
 pub use self::timer::GameTimer;
@@ -64,4 +61,4 @@ impl ContextParams {
     }
 }
 
-pub type Blob = self::com::ComPtr<d3dcommon::ID3DBlob>;
+pub struct Blob(com::ComPtr<d3dcommon::ID3DBlob>);

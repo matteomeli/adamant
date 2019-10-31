@@ -26,7 +26,7 @@ pub struct GpuBuffer {
 
 impl GpuBuffer {
     pub fn create(device: Device, size: u64) -> Result<Self, Error> {
-        let mut resource = ComPtr::<d3d12::ID3D12Resource>::empty();
+        let mut resource: *mut d3d12::ID3D12Resource = ptr::null_mut();
         let resource_desc = d3d12::D3D12_RESOURCE_DESC {
             Alignment: 0,
             DepthOrArraySize: 1,
@@ -57,11 +57,14 @@ impl GpuBuffer {
                 d3d12::D3D12_RESOURCE_STATE_COMMON,
                 ptr::null(),
                 &d3d12::ID3D12Resource::uuidof(),
-                resource.as_mut_void(),
+                &mut resource as *mut *mut _ as *mut *mut _,
             );
             if SUCCEEDED(hr) {
                 Ok(GpuBuffer {
-                    resource: GpuResource::create(resource, d3d12::D3D12_RESOURCE_STATE_COMMON),
+                    resource: GpuResource::create(
+                        unsafe { ComPtr::from_ptr(resource) },
+                        d3d12::D3D12_RESOURCE_STATE_COMMON,
+                    ),
                     size,
                 })
             } else {

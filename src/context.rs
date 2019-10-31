@@ -216,7 +216,7 @@ impl Context {
                 u: mem::zeroed(),
             };
             *barrier.u.Transition_mut() = d3d12::D3D12_RESOURCE_TRANSITION_BARRIER {
-                pResource: self.render_targets[current_index].native.as_ptr_mut(),
+                pResource: self.render_targets[current_index].native.as_ptr(),
                 Subresource: d3d12::D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
                 StateBefore: d3d12::D3D12_RESOURCE_STATE_PRESENT,
                 StateAfter: d3d12::D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -261,7 +261,7 @@ impl Context {
                 u: mem::zeroed(),
             };
             *barrier.u.Transition_mut() = d3d12::D3D12_RESOURCE_TRANSITION_BARRIER {
-                pResource: self.render_targets[current_index].native.as_ptr_mut(),
+                pResource: self.render_targets[current_index].native.as_ptr(),
                 Subresource: d3d12::D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
                 StateBefore: d3d12::D3D12_RESOURCE_STATE_RENDER_TARGET,
                 StateAfter: d3d12::D3D12_RESOURCE_STATE_PRESENT,
@@ -270,7 +270,7 @@ impl Context {
 
             // Send the command list off to the GPU for processing.
             self.command_list.close().unwrap();
-            let command_list = self.command_list.0.as_ptr_mut() as *mut _;
+            let command_list = self.command_list.0.as_ptr() as *mut _;
             let command_lists = vec![command_list];
             self.command_queue
                 .native
@@ -407,36 +407,31 @@ impl Context {
         let mut dxgi_factory_flags = 0;
         #[cfg(debug_assertions)]
         {
-            trace!("Enabling D3D12 debug device.");
-            let mut debug_controller = ComPtr::<d3d12sdklayers::ID3D12Debug>::empty();
+            let mut debug_controller: *mut d3d12sdklayers::ID3D12Debug = ptr::null_mut();
             unsafe {
                 if SUCCEEDED(d3d12::D3D12GetDebugInterface(
                     &d3d12sdklayers::ID3D12Debug::uuidof(),
-                    debug_controller.as_mut_void(),
+                    &mut debug_controller as *mut *mut _ as *mut *mut _,
                 )) {
-                    info!("D3D12 debug device enabled.");
-                    debug_controller.EnableDebugLayer();
-                } else {
-                    warn!("D3D12 debug device is not available.");
+                    (*debug_controller).EnableDebugLayer();
+                    (*debug_controller).Release();
                 }
             }
 
-            trace!("Enabling DXGI info queue.");
-            let mut info_queue = ComPtr::<dxgidebug::IDXGIInfoQueue>::empty();
+            let mut info_queue: *mut dxgidebug::IDXGIInfoQueue = ptr::null_mut();
             unsafe {
                 if SUCCEEDED(dxgi1_3::DXGIGetDebugInterface1(
                     0,
                     &dxgidebug::IDXGIInfoQueue::uuidof(),
-                    info_queue.as_mut_void(),
+                    &mut info_queue as *mut *mut _ as *mut *mut _,
                 )) {
-                    info!("DXGI info queue enabled.");
                     dxgi_factory_flags = dxgi1_3::DXGI_CREATE_FACTORY_DEBUG;
-                    info_queue.SetBreakOnSeverity(
+                    (*info_queue).SetBreakOnSeverity(
                         dxgidebug::DXGI_DEBUG_ALL,
                         dxgidebug::DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION,
                         minwindef::TRUE,
                     );
-                    info_queue.SetBreakOnSeverity(
+                    (*info_queue).SetBreakOnSeverity(
                         dxgidebug::DXGI_DEBUG_ALL,
                         dxgidebug::DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR,
                         minwindef::TRUE,
@@ -453,9 +448,8 @@ impl Context {
                         },
                         ..mem::zeroed()
                     };
-                    info_queue.AddStorageFilterEntries(dxgidebug::DXGI_DEBUG_DXGI, &filter);
-                } else {
-                    warn!("DXGI info queue is not available.");
+                    (*info_queue).AddStorageFilterEntries(dxgidebug::DXGI_DEBUG_DXGI, &filter);
+                    (*info_queue).Release();
                 }
             }
         }
@@ -482,28 +476,27 @@ impl Context {
         let mut rtv_descriptors = Vec::with_capacity(back_buffer_count as _);
         unsafe {
             for n in 0..back_buffer_count {
-                let mut render_target = ComPtr::<d3d12::ID3D12Resource>::empty();
-                if SUCCEEDED(swapchain.0.GetBuffer(
+                let mut render_target: *mut d3d12::ID3D12Resource = ptr::null_mut();
+                if FAILED(swapchain.0.GetBuffer(
                     n,
                     &d3d12::ID3D12Resource::uuidof(),
-                    render_target.as_mut_void(),
+                    &mut render_target as *mut *mut _ as *mut *mut _,
                 )) {
-                    info!("D3D12 render target view created for back buffer {}.", n);
-                    #[cfg(debug_assertions)]
-                    {
-                        render_target.SetName(
-                            format!("AdamantRenderTarget{}", n)
-                                .encode_utf16()
-                                .collect::<Vec<u16>>()
-                                .as_ptr(),
-                        );
-                    }
-                } else {
                     panic!(
                         "Failed to create D3D12 render target view for back buffer {}.",
                         n
                     );
                 }
+
+                /*#[cfg(debug_assertions)]
+                {
+                    render_target.SetName(
+                        format!("AdamantRenderTarget{}", n)
+                            .encode_utf16()
+                            .collect::<Vec<u16>>()
+                            .as_ptr(),
+                    );
+                }*/
 
                 let rtv_desc = d3d12::D3D12_RENDER_TARGET_VIEW_DESC {
                     Format: back_buffer_format,
@@ -511,14 +504,12 @@ impl Context {
                     ..mem::zeroed()
                 };
                 let rtv_descriptor = descriptor_allocator.allocate();
-                device.native.CreateRenderTargetView(
-                    render_target.as_ptr_mut(),
-                    &rtv_desc,
-                    rtv_descriptor,
-                );
+                device
+                    .native
+                    .CreateRenderTargetView(render_target, &rtv_desc, rtv_descriptor);
                 rtv_descriptors.push(rtv_descriptor);
                 render_targets.push(GpuResource::create(
-                    render_target,
+                    unsafe { ComPtr::from_ptr(render_target) },
                     d3d12::D3D12_RESOURCE_STATE_PRESENT,
                 ));
             }
@@ -558,7 +549,7 @@ impl Context {
             Flags: d3d12::D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
         };
 
-        let mut depth_stencil = ComPtr::<d3d12::ID3D12Resource>::empty();
+        let mut depth_stencil: *mut d3d12::ID3D12Resource = ptr::null_mut();
         unsafe {
             let mut depth_optimized_clear_value = d3d12::D3D12_CLEAR_VALUE {
                 Format: depth_buffer_format,
@@ -568,21 +559,19 @@ impl Context {
                 Depth: 1.0,
                 Stencil: 0,
             };
-            if SUCCEEDED(device.native.CreateCommittedResource(
+            if FAILED(device.native.CreateCommittedResource(
                 &depth_heap_properties,
                 d3d12::D3D12_HEAP_FLAG_NONE,
                 &depth_stencil_desc,
                 d3d12::D3D12_RESOURCE_STATE_DEPTH_WRITE,
                 &depth_optimized_clear_value,
                 &d3d12::ID3D12Resource::uuidof(),
-                depth_stencil.as_mut_void(),
+                &mut depth_stencil as *mut *mut _ as *mut *mut _,
             )) {
-                info!("D3D12 depth/stencil buffer created.");
-            } else {
                 panic!("Failed to create D3D12 depth/stencil buffer.");
             }
 
-            #[cfg(debug_assertions)]
+            /*#[cfg(debug_assertions)]
             {
                 depth_stencil.SetName(
                     "AdamantDepthStencil"
@@ -590,21 +579,22 @@ impl Context {
                         .collect::<Vec<u16>>()
                         .as_ptr(),
                 );
-            }
+            }*/
 
             let dsv_desc = d3d12::D3D12_DEPTH_STENCIL_VIEW_DESC {
                 Format: depth_buffer_format,
                 ViewDimension: d3d12::D3D12_DSV_DIMENSION_TEXTURE2D,
                 ..mem::zeroed()
             };
-            device.native.CreateDepthStencilView(
-                depth_stencil.as_ptr_mut(),
-                &dsv_desc,
-                dsv_descriptor,
-            );
+            device
+                .native
+                .CreateDepthStencilView(depth_stencil, &dsv_desc, dsv_descriptor);
         }
         (
-            GpuResource::create(depth_stencil, d3d12::D3D12_RESOURCE_STATE_DEPTH_WRITE),
+            GpuResource::create(
+                unsafe { ComPtr::from_ptr(depth_stencil) },
+                d3d12::D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            ),
             dsv_descriptor,
         )
     }
@@ -645,17 +635,18 @@ impl Drop for Context {
             #[cfg(debug_assertions)]
             {
                 // Debug tracking alive dxgi objects
-                let mut dxgi_debug = ComPtr::<dxgidebug::IDXGIDebug1>::empty();
+                let mut dxgi_debug: *mut dxgidebug::IDXGIDebug1 = ptr::null_mut();
                 if winerror::SUCCEEDED(dxgi1_3::DXGIGetDebugInterface1(
                     0,
                     &dxgidebug::IDXGIDebug1::uuidof(),
-                    dxgi_debug.as_mut_void(),
+                    &mut dxgi_debug as *mut *mut _ as *mut *mut _,
                 )) {
-                    dxgi_debug.ReportLiveObjects(
+                    (*dxgi_debug).ReportLiveObjects(
                         dxgidebug::DXGI_DEBUG_ALL,
                         dxgidebug::DXGI_DEBUG_RLO_SUMMARY
                             | dxgidebug::DXGI_DEBUG_RLO_IGNORE_INTERNAL,
                     );
+                    (*dxgi_debug).Release();
                 }
             }
         }

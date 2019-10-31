@@ -37,22 +37,22 @@ impl GraphicsCommandList {
         type_: CommandListType,
         debug_name: &str,
     ) -> Result<Self, Error> {
-        let mut command_list = ComPtr::<d3d12::ID3D12GraphicsCommandList>::empty();
+        let mut command_list: *mut d3d12::ID3D12GraphicsCommandList = ptr::null_mut();
         let mut hr = unsafe {
             device.native.CreateCommandList(
                 0,
                 type_ as _,
-                allocator.native.as_ptr_mut(),
+                allocator.native.as_ptr(),
                 ptr::null_mut(),
                 &d3d12::ID3D12GraphicsCommandList::uuidof(),
-                command_list.as_mut_void(),
+                &mut command_list as *mut *mut _ as *mut *mut _,
             )
         };
         if FAILED(hr) {
             return Err(Error::CommandListCreateFailed);
         }
 
-        #[cfg(debug_assertions)]
+        /*#[cfg(debug_assertions)]
         {
             hr = unsafe {
                 command_list.SetName(debug_name.encode_utf16().collect::<Vec<u16>>().as_ptr())
@@ -60,9 +60,11 @@ impl GraphicsCommandList {
             if FAILED(hr) {
                 return Err(Error::CommandListSetNameFailed);
             }
-        }
+        }*/
 
-        Ok(GraphicsCommandList(command_list))
+        Ok(GraphicsCommandList(unsafe {
+            ComPtr::from_ptr(command_list)
+        }))
     }
 
     pub fn copy_buffer(
@@ -74,9 +76,9 @@ impl GraphicsCommandList {
         unsafe {
             for region in regions {
                 self.0.CopyBufferRegion(
-                    dest.native.as_ptr_mut(),
+                    dest.native.as_ptr(),
                     region.dest_offset,
-                    source.native.as_ptr_mut(),
+                    source.native.as_ptr(),
                     region.source_offset,
                     region.size,
                 );
@@ -94,7 +96,7 @@ impl GraphicsCommandList {
     pub fn reset(&self, command_allocator: &CommandAllocator) -> Result<(), Error> {
         let hr = unsafe {
             self.0
-                .Reset(command_allocator.native.as_ptr_mut(), ptr::null_mut())
+                .Reset(command_allocator.native.as_ptr(), ptr::null_mut())
         };
         if SUCCEEDED(hr) {
             Ok(())

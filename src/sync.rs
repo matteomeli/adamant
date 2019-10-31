@@ -57,17 +57,17 @@ impl Fence {
     }
 
     pub fn new_with_value(device: &Device, fence_value: u64) -> Result<Self, Error> {
-        let mut fence = ComPtr::<d3d12::ID3D12Fence>::empty();
+        let mut fence: *mut d3d12::ID3D12Fence = ptr::null_mut();
         let hr = unsafe {
             device.native.CreateFence(
                 fence_value,
                 d3d12::D3D12_FENCE_FLAG_NONE,
                 &d3d12::ID3D12Fence::uuidof(),
-                fence.as_mut_void(),
+                &mut fence as *mut *mut _ as *mut *mut _,
             )
         };
         if SUCCEEDED(hr) {
-            Ok(Fence(fence))
+            Ok(Fence(unsafe { ComPtr::from_ptr(fence) }))
         } else {
             Err(Error::FenceCreateFailed)
         }

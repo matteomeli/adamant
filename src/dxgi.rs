@@ -34,17 +34,17 @@ pub struct Factory {
 
 impl Factory {
     pub fn new(window_handle: HWND, flags: u32) -> Result<Self, Error> {
-        let mut factory = ComPtr::<dxgi1_4::IDXGIFactory4>::empty();
+        let mut factory: *mut dxgi1_4::IDXGIFactory4 = ptr::null_mut();
         let hr = unsafe {
             dxgi1_3::CreateDXGIFactory2(
                 flags,
                 &dxgi1_4::IDXGIFactory4::uuidof(),
-                factory.as_mut_void(),
+                &mut factory as *mut *mut _ as *mut *mut _,
             )
         };
         if SUCCEEDED(hr) {
             Ok(Factory {
-                native: factory,
+                native: unsafe { ComPtr::from_ptr(factory) },
                 window_handle,
             })
         } else {
@@ -91,7 +91,7 @@ impl Factory {
         &self,
         min_feature_level: d3dcommon::D3D_FEATURE_LEVEL,
     ) -> Result<ComPtr<dxgi::IDXGIAdapter1>, Error> {
-        let mut adapter = ComPtr::<dxgi::IDXGIAdapter1>::empty();
+        let mut adapter: *mut dxgi::IDXGIAdapter1 = ptr::null_mut();
         // Pretty much all unsafe here.
         unsafe {
             match self.native.cast::<dxgi1_6::IDXGIFactory6>() {
@@ -102,11 +102,11 @@ impl Factory {
                             index,
                             dxgi1_6::DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
                             &dxgi::IDXGIAdapter1::uuidof(),
-                            adapter.as_mut_void(),
+                            &mut adapter as *mut *mut _ as *mut *mut _,
                         )) {
                             index += 1;
                             let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
-                            let hr = adapter.GetDesc1(&mut desc);
+                            let hr = (*adapter).GetDesc1(&mut desc);
                             if FAILED(hr) {
                                 continue;
                             }
@@ -117,7 +117,7 @@ impl Factory {
                             }
 
                             if SUCCEEDED(d3d12::D3D12CreateDevice(
-                                adapter.as_ptr_mut() as _,
+                                adapter as _,
                                 min_feature_level,
                                 &d3d12::ID3D12Device::uuidof(),
                                 ptr::null_mut(),
@@ -127,7 +127,7 @@ impl Factory {
                         }
                     }
                     if !adapter.is_null() {
-                        Ok(adapter)
+                        Ok(unsafe { ComPtr::from_ptr(adapter) })
                     } else {
                         Err(Error::AdapterCreateFailed)
                     }
@@ -142,19 +142,19 @@ impl Factory {
         min_feature_level: d3dcommon::D3D_FEATURE_LEVEL,
     ) -> Result<ComPtr<dxgi::IDXGIAdapter1>, Error> {
         // Find the adapter with the largest dedicated video memory.
-        let mut adapter = ComPtr::<dxgi::IDXGIAdapter1>::empty();
+        let mut adapter: *mut dxgi::IDXGIAdapter1 = ptr::null_mut();
         let mut max_dedicated_video_memeory: usize = 0;
         let mut adapter_index = 0;
         let mut index = 0;
         unsafe {
             while SUCCEEDED(
                 self.native
-                    .EnumAdapters1(index, adapter.as_mut_void() as *mut *mut _),
+                    .EnumAdapters1(index, adapter as *mut *mut _ as *mut *mut _),
             ) {
                 index += 1;
 
                 let mut desc = dxgi::DXGI_ADAPTER_DESC1 { ..mem::zeroed() };
-                let hr = adapter.GetDesc1(&mut desc);
+                let hr = (*adapter).GetDesc1(&mut desc);
                 if FAILED(hr) {
                     continue;
                 }
@@ -165,7 +165,7 @@ impl Factory {
                 }
 
                 if SUCCEEDED(d3d12::D3D12CreateDevice(
-                    adapter.as_ptr_mut() as _,
+                    adapter as _,
                     min_feature_level,
                     &d3d12::ID3D12Device::uuidof(),
                     ptr::null_mut(),
@@ -180,10 +180,10 @@ impl Factory {
             if max_dedicated_video_memeory > 0
                 && SUCCEEDED(
                     self.native
-                        .EnumAdapters1(adapter_index, adapter.as_mut_void() as *mut *mut _),
+                        .EnumAdapters1(adapter_index, &mut adapter as *mut *mut _ as *mut *mut _),
                 )
             {
-                Ok(adapter)
+                Ok(unsafe { ComPtr::from_ptr(adapter) })
             } else {
                 Err(Error::AdapterCreateFailed)
             }
@@ -191,13 +191,15 @@ impl Factory {
     }
 
     pub fn enum_adapter_warp(&self) -> Result<ComPtr<dxgi::IDXGIAdapter1>, Error> {
-        let mut adapter = ComPtr::<dxgi::IDXGIAdapter1>::empty();
+        let mut adapter: *mut dxgi::IDXGIAdapter1 = ptr::null_mut();
         let hr = unsafe {
-            self.native
-                .EnumWarpAdapter(&dxgi::IDXGIAdapter1::uuidof(), adapter.as_mut_void())
+            self.native.EnumWarpAdapter(
+                &dxgi::IDXGIAdapter1::uuidof(),
+                &mut adapter as *mut *mut _ as *mut *mut _,
+            )
         };
         if SUCCEEDED(hr) {
-            Ok(adapter)
+            Ok(unsafe { ComPtr::from_ptr(adapter) })
         } else {
             Err(Error::AdapterCreateFailed)
         }
@@ -291,18 +293,19 @@ impl Swapchain {
                 Windowed: minwindef::TRUE,
                 ..mem::zeroed()
             };
-            let mut swapchain = ComPtr::<dxgi1_2::IDXGISwapChain1>::empty();
+            let mut swapchain: *mut dxgi1_2::IDXGISwapChain1 = ptr::null_mut();
             if FAILED(factory.native.CreateSwapChainForHwnd(
-                command_queue.native.as_ptr_mut() as *mut _,
+                command_queue.native.as_ptr() as *mut _,
                 properties.window_handle,
                 &desc,
                 &fullscreen_desc,
                 ptr::null_mut(),
-                swapchain.as_mut_void() as *mut *mut _ as *mut *mut _,
+                &mut swapchain as *mut *mut _ as *mut *mut _,
             )) {
                 return Err(Error::SwapchainCreateFailed);
             }
-            if let Ok(swapchain4) = swapchain.cast::<dxgi1_5::IDXGISwapChain4>() {
+            let swapchain1 = unsafe { ComPtr::from_ptr(swapchain) };
+            if let Ok(swapchain4) = swapchain1.cast::<dxgi1_5::IDXGISwapChain4>() {
                 Ok(Swapchain(swapchain4))
             } else {
                 Err(Error::SwapchainCastFailed)
@@ -316,9 +319,10 @@ impl Swapchain {
         is_hdr_enabled: bool,
     ) -> dxgitype::DXGI_COLOR_SPACE_TYPE {
         let mut is_hdr10_supported = false;
-        let output = ComPtr::<dxgi::IDXGIOutput>::empty();
+        let mut output: *mut dxgi::IDXGIOutput = ptr::null_mut();
         unsafe {
-            if SUCCEEDED(self.0.GetContainingOutput(&mut output.as_ptr_mut())) {
+            if SUCCEEDED(self.0.GetContainingOutput(&mut output)) {
+                let output = ComPtr::from_ptr(output);
                 if let Ok(output6) = output.cast::<dxgi1_6::IDXGIOutput6>() {
                     let mut desc = dxgi1_6::DXGI_OUTPUT_DESC1 { ..mem::zeroed() };
                     if FAILED(output6.GetDesc1(&mut desc)) {

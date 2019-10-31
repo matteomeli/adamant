@@ -5,7 +5,7 @@ use winapi::shared::winerror::FAILED;
 use winapi::um::d3d12;
 use winapi::Interface;
 
-use std::mem;
+use std::{mem, ptr};
 
 #[derive(Debug)]
 pub enum Error {
@@ -29,7 +29,7 @@ impl DescriptorHeap {
         descriptors_count: u32,
         debug_name: &str,
     ) -> Result<Self, Error> {
-        let mut descriptor_heap = ComPtr::<d3d12::ID3D12DescriptorHeap>::empty();
+        let mut descriptor_heap: *mut d3d12::ID3D12DescriptorHeap = ptr::null_mut();
         let desc = d3d12::D3D12_DESCRIPTOR_HEAP_DESC {
             NumDescriptors: descriptors_count,
             Type: type_,
@@ -40,14 +40,14 @@ impl DescriptorHeap {
             device.native.CreateDescriptorHeap(
                 &desc,
                 &d3d12::ID3D12DescriptorHeap::uuidof(),
-                descriptor_heap.as_mut_void(),
+                &mut descriptor_heap as *mut *mut _ as *mut *mut _,
             )
         };
         if FAILED(hr) {
             return Err(Error::DescriptorHeapCreateFailed);
         }
 
-        #[cfg(debug_assertions)]
+        /*#[cfg(debug_assertions)]
         {
             hr = unsafe {
                 descriptor_heap.SetName(debug_name.encode_utf16().collect::<Vec<u16>>().as_ptr())
@@ -55,13 +55,13 @@ impl DescriptorHeap {
             if FAILED(hr) {
                 return Err(Error::DescriptorHeapSetNameFailed);
             }
-        }
+        }*/
 
-        let next_descriptor = unsafe { descriptor_heap.GetCPUDescriptorHandleForHeapStart() };
+        let next_descriptor = unsafe { (*descriptor_heap).GetCPUDescriptorHandleForHeapStart() };
         let descriptor_size = unsafe { device.native.GetDescriptorHandleIncrementSize(type_) };
 
         Ok(DescriptorHeap {
-            _native: descriptor_heap,
+            _native: unsafe { ComPtr::from_ptr(descriptor_heap) },
             descriptor_size,
             next_descriptor,
         })

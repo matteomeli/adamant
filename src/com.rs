@@ -1,4 +1,3 @@
-use winapi::ctypes::c_void;
 use winapi::shared::winerror::FAILED;
 use winapi::um::unknwnbase::IUnknown;
 use winapi::Interface;
@@ -6,51 +5,31 @@ use winapi::Interface;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops::Deref;
-use std::ptr;
+use std::ptr::{null_mut, NonNull};
 
 #[repr(transparent)]
-pub struct ComPtr<T>(*mut T);
+pub struct ComPtr<T>(NonNull<T>);
 
 impl<T> ComPtr<T> {
-    pub fn empty() -> Self
+    pub unsafe fn from_ptr(ptr: *mut T) -> Self
     where
         T: Interface,
     {
-        ComPtr(ptr::null_mut())
+        ComPtr(NonNull::new(ptr).expect("ptr should not be null"))
     }
 
-    pub fn from_ptr(ptr: *mut T) -> Self
-    where
-        T: Interface,
-    {
-        ComPtr(ptr)
-    }
-
-    pub fn as_ptr(&self) -> *const T {
-        self.0
-    }
-
-    pub fn as_ptr_mut(&self) -> *mut T {
-        self.0
-    }
-
-    pub fn is_null(&self) -> bool {
-        self.0.is_null()
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.as_ptr()
     }
 
     pub fn into_ptr(self) -> *mut T {
-        let p = self.0;
+        let p = self.0.as_ptr();
         mem::forget(self);
         p
     }
 
-    pub unsafe fn as_mut_void(&mut self) -> *mut *mut c_void {
-        &mut self.0 as *mut *mut _ as *mut *mut _
-    }
-
     fn as_unknown(&self) -> &IUnknown {
-        debug_assert!(!self.is_null(), "ptr should not be null");
-        unsafe { &*(self.as_ptr() as *mut IUnknown) }
+        unsafe { &*(self.0.as_ptr() as *mut IUnknown) }
     }
 
     pub fn up<U>(self) -> ComPtr<U>
@@ -58,7 +37,7 @@ impl<T> ComPtr<T> {
         T: Deref<Target = U>,
         U: Interface,
     {
-        ComPtr::from_ptr(self.into_ptr() as *mut U)
+        unsafe { ComPtr::from_ptr(self.into_ptr() as *mut U) }
     }
 
     // Cast creates a new ComPtr requiring explicit destroy call to avoid memory leaks.
@@ -66,26 +45,19 @@ impl<T> ComPtr<T> {
     where
         U: Interface,
     {
-        let mut p = ComPtr::<U>::empty();
-        if !self.is_null() {
-            let hr = unsafe {
-                self.as_unknown()
-                    .QueryInterface(&U::uuidof(), p.as_mut_void())
-            };
-            if FAILED(hr) {
-                return Err(hr);
-            }
+        let mut ptr = null_mut();
+        let hr = unsafe { self.as_unknown().QueryInterface(&U::uuidof(), &mut ptr) };
+        if FAILED(hr) {
+            return Err(hr);
         }
-        Ok(p)
+        Ok(unsafe { ComPtr::from_ptr(ptr as *mut U) })
     }
 }
 
 impl<T> Drop for ComPtr<T> {
     fn drop(&mut self) {
-        if !self.is_null() {
-            unsafe {
-                self.as_unknown().Release();
-            }
+        unsafe {
+            self.as_unknown().Release();
         }
     }
 }
@@ -95,19 +67,16 @@ where
     T: Interface,
 {
     fn clone(&self) -> Self {
-        if !self.is_null() {
-            unsafe {
-                self.as_unknown().AddRef();
-            }
+        unsafe {
+            self.as_unknown().AddRef();
+            ComPtr::from_ptr(self.as_ptr())
         }
-        ComPtr::from_ptr(self.as_ptr_mut())
     }
 }
 
 impl<T> Deref for ComPtr<T> {
     type Target = T;
     fn deref(&self) -> &T {
-        assert!(!self.is_null(), "ptr should not be null");
         unsafe { &*self.as_ptr() }
     }
 }

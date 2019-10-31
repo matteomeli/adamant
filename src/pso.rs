@@ -1,15 +1,14 @@
 use crate::com::ComPtr;
+use crate::device::Device;
 use crate::root_signature::RootSignature;
-use crate::{Blob, Device};
+use crate::Blob;
 
 use winapi::shared::{
     dxgiformat, dxgitype,
     winerror::{FAILED, SUCCEEDED},
 };
-use winapi::um::{d3d12, d3dcompiler};
+use winapi::um::{d3d12, d3dcommon, d3dcompiler};
 use winapi::Interface;
-
-use log::info;
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -57,8 +56,8 @@ impl Shader {
         Shader {
             bytecode: unsafe {
                 d3d12::D3D12_SHADER_BYTECODE {
-                    BytecodeLength: blob.GetBufferSize(),
-                    pShaderBytecode: blob.GetBufferPointer(),
+                    BytecodeLength: blob.0.GetBufferSize(),
+                    pShaderBytecode: blob.0.GetBufferPointer(),
                 }
             },
         }
@@ -88,8 +87,8 @@ impl Shader {
             format!("{}_{}\0", stage, model)
         };
 
-        let mut shader = Blob::null();
-        let mut error = Blob::null();
+        let mut shader: *mut d3dcommon::ID3DBlob = ptr::null_mut();
+        let mut error: *mut d3dcommon::ID3DBlob = ptr::null_mut();
 
         let hr = unsafe {
             d3dcompiler::D3DCompile(
@@ -102,25 +101,24 @@ impl Shader {
                 target.as_ptr() as *const _,
                 flags.bits(),
                 0, // NOT USED
-                shader.as_mut_void() as *mut *mut _,
-                error.as_mut_void() as *mut *mut _,
+                &mut shader as *mut *mut _ as *mut *mut _,
+                &mut error as *mut *mut _ as *mut *mut _,
             )
         };
 
         if FAILED(hr) {
             let message = unsafe {
-                let pointer = error.GetBufferPointer();
-                let size = error.GetBufferSize();
+                let pointer = (*error).GetBufferPointer();
+                let size = (*error).GetBufferSize();
                 let slice = slice::from_raw_parts(pointer as *const u8, size as usize);
-                String::from_utf8_lossy(slice).into_owned()
+                let message = String::from_utf8_lossy(slice).into_owned();
+                (*error).Release();
+                message
             };
-            unsafe {
-                error.destroy();
-            }
             panic!("Failed to compile shader: {}", message);
         }
 
-        Self::from_blob(shader)
+        Self::from_blob(Blob(unsafe { ComPtr::from_ptr(shader) }))
     }
 
     pub fn from_file(
@@ -253,28 +251,28 @@ impl PipelineStateBuilder {
     }
 
     pub fn with_root_signature(mut self, root_signature: RootSignature) -> PipelineStateBuilder {
-        self.desc.pRootSignature = root_signature.as_raw();
+        self.desc.pRootSignature = root_signature.0.as_ptr();
         self
     }
 
-    pub fn build(self, device: Device, kind: PSOKind) -> PipelineState {
-        let mut pso = ComPtr::<d3d12::ID3D12PipelineState>::null();
+    pub fn build(self, device: &Device, kind: PSOKind) -> PipelineState {
+        let mut pso: *mut d3d12::ID3D12PipelineState = ptr::null_mut();
         match kind {
             PSOKind::Graphics => unsafe {
-                if SUCCEEDED(device.CreateGraphicsPipelineState(
+                if FAILED(device.native.CreateGraphicsPipelineState(
                     &self.desc,
                     &d3d12::ID3D12RootSignature::uuidof(),
-                    pso.as_mut_void(),
+                    &mut pso as *mut *mut _ as *mut *mut _,
                 )) {
-                    info!("Graphics pipeline state object created.")
-                } else {
                     panic!("Failed to create D3D12 graphics pipeline state object.");
                 }
             },
             PSOKind::Compute => unimplemented!(),
         }
+
         // TODO: Cache compiled psos
-        pso
+
+        PipelineState(unsafe { ComPtr::from_ptr(pso) })
     }
 }
 
@@ -290,4 +288,4 @@ impl Default for PipelineStateBuilder {
     }
 }
 
-pub type PipelineState = ComPtr<d3d12::ID3D12PipelineState>;
+pub struct PipelineState(ComPtr<d3d12::ID3D12PipelineState>);

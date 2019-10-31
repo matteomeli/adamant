@@ -6,6 +6,8 @@ use winapi::shared::winerror::{FAILED, SUCCEEDED};
 use winapi::um::d3d12;
 use winapi::Interface;
 
+use std::ptr;
+
 #[derive(Debug)]
 pub enum Error {
     CommandAllocatorCreateFailed,
@@ -58,19 +60,19 @@ pub struct CommandAllocator {
 
 impl CommandAllocator {
     pub fn new(device: &Device, type_: CommandListType, id: usize) -> Result<Self, Error> {
-        let mut command_allocator = ComPtr::<d3d12::ID3D12CommandAllocator>::empty();
+        let mut command_allocator: *mut d3d12::ID3D12CommandAllocator = ptr::null_mut();
         let mut hr = unsafe {
             device.native.CreateCommandAllocator(
                 type_ as _,
                 &d3d12::ID3D12CommandAllocator::uuidof(),
-                command_allocator.as_mut_void(),
+                &mut command_allocator as *mut *mut _ as *mut *mut _,
             )
         };
         if FAILED(hr) {
             return Err(Error::CommandAllocatorCreateFailed);
         }
 
-        #[cfg(debug_assertions)]
+        /*#[cfg(debug_assertions)]
         {
             hr = unsafe {
                 command_allocator.SetName(
@@ -83,10 +85,10 @@ impl CommandAllocator {
             if FAILED(hr) {
                 return Err(Error::CommandAllocatorSetNameFailed);
             }
-        }
+        }*/
 
         Ok(CommandAllocator {
-            native: command_allocator,
+            native: unsafe { ComPtr::from_ptr(command_allocator) },
             id,
         })
     }

@@ -8,7 +8,7 @@ use winapi::shared::{
 use winapi::um::{d3d12, d3d12sdklayers, d3dcommon};
 use winapi::Interface;
 
-use std::mem;
+use std::{mem, ptr};
 
 #[derive(Debug)]
 pub enum Error {
@@ -27,13 +27,13 @@ impl Device {
         adapter: &Adapter,
         min_feature_level: d3dcommon::D3D_FEATURE_LEVEL,
     ) -> Result<Self, Error> {
-        let mut device = ComPtr::<d3d12::ID3D12Device>::empty();
+        let mut device: *mut d3d12::ID3D12Device = ptr::null_mut();
         let mut hr = unsafe {
             d3d12::D3D12CreateDevice(
-                adapter.0.as_ptr_mut() as _,
+                adapter.0.as_ptr() as _,
                 min_feature_level,
                 &d3d12::ID3D12Device::uuidof(),
-                device.as_mut_void(),
+                &mut device as *mut *mut _ as *mut *mut _,
             )
         };
 
@@ -54,7 +54,7 @@ impl Device {
             MaxSupportedFeatureLevel: d3dcommon::D3D_FEATURE_LEVEL_11_0,
         };
         let feature_level = unsafe {
-            if SUCCEEDED(device.CheckFeatureSupport(
+            if SUCCEEDED((*device).CheckFeatureSupport(
                 d3d12::D3D12_FEATURE_FEATURE_LEVELS,
                 &mut feature_levels as *mut _ as *mut _,
                 mem::size_of::<d3d12::D3D12_FEATURE_DATA_FEATURE_LEVELS>() as _,
@@ -65,12 +65,14 @@ impl Device {
             }
         };
 
+        let native = unsafe { ComPtr::from_ptr(device) };
+
         // Configure device for debugging.
         #[cfg(debug_assertions)]
         {
-            Self::configure_debug_device(&device);
+            Self::configure_debug_device(&native);
 
-            hr = unsafe {
+            /*hr = unsafe {
                 device.SetName(
                     "Adamant::Device"
                         .encode_utf16()
@@ -80,11 +82,11 @@ impl Device {
             };
             if FAILED(hr) {
                 return Err(Error::DeviceSetNameFailed);
-            }
+            }*/
         }
 
         Ok(Device {
-            native: device,
+            native,
             feature_level,
         })
     }

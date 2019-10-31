@@ -10,6 +10,7 @@ use winapi::um::d3d12;
 use winapi::Interface;
 
 use std::cell::RefCell;
+use std::ptr;
 
 #[derive(Debug)]
 pub enum Error {
@@ -34,7 +35,7 @@ impl CommandQueue {
         flags: d3d12::D3D12_COMMAND_QUEUE_FLAGS,
         debug_name: &str,
     ) -> Result<Self, Error> {
-        let mut queue = ComPtr::<d3d12::ID3D12CommandQueue>::empty();
+        let mut queue: *mut d3d12::ID3D12CommandQueue = ptr::null_mut();
         let desc = d3d12::D3D12_COMMAND_QUEUE_DESC {
             Type: type_ as _,
             Priority: d3d12::D3D12_COMMAND_QUEUE_PRIORITY_NORMAL as _,
@@ -45,24 +46,24 @@ impl CommandQueue {
             device.native.CreateCommandQueue(
                 &desc,
                 &d3d12::ID3D12CommandQueue::uuidof(),
-                queue.as_mut_void(),
+                &mut queue as *mut *mut _ as *mut *mut _,
             )
         };
         if FAILED(hr) {
             return Err(Error::CommandQueueCreateFailed);
         }
 
-        #[cfg(debug_assertions)]
+        /*#[cfg(debug_assertions)]
         {
             hr = unsafe { queue.SetName(debug_name.encode_utf16().collect::<Vec<u16>>().as_ptr()) };
             if FAILED(hr) {
                 return Err(Error::CommandQueueSetNameFailed);
             }
-        }
+        }*/
 
         Ok(CommandQueue {
             device: device.clone(),
-            native: queue,
+            native: unsafe { ComPtr::from_ptr(queue) },
             command_allocator_pool: RefCell::new(CommandAllocatorPool::new(device.clone(), type_)),
             fence: Fence::new(device).unwrap(),
             fence_value: 0,
@@ -104,7 +105,7 @@ impl CommandQueue {
     pub fn execute_command_lists(&self, command_lists: &[CommandList]) {
         let lists: Vec<*mut d3d12::ID3D12CommandList> = command_lists
             .iter()
-            .map(|command_list| command_list.0.as_ptr_mut())
+            .map(|command_list| command_list.0.as_ptr())
             .collect();
         unsafe {
             self.native
@@ -114,10 +115,7 @@ impl CommandQueue {
 
     pub fn signal_fence(&mut self) -> Result<(), Error> {
         self.fence_value += 1;
-        let hr = unsafe {
-            self.native
-                .Signal(self.fence.0.as_ptr_mut(), self.fence_value)
-        };
+        let hr = unsafe { self.native.Signal(self.fence.0.as_ptr(), self.fence_value) };
         if SUCCEEDED(hr) {
             Ok(())
         } else {

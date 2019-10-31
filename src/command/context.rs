@@ -152,7 +152,7 @@ impl CommandContext {
                 u: unsafe { mem::zeroed() },
             };
             *unsafe { barrier.u.Transition_mut() } = d3d12::D3D12_RESOURCE_TRANSITION_BARRIER {
-                pResource: resource.native.as_ptr_mut(),
+                pResource: resource.native.as_ptr(),
                 Subresource: d3d12::D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
                 StateBefore: old_state,
                 StateAfter: new_state,

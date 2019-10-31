@@ -1,11 +1,11 @@
 use crate::com::ComPtr;
-use crate::{Blob, Device};
+use crate::device::Device;
 
 use winapi::shared::winerror::FAILED;
-use winapi::um::d3d12;
+use winapi::um::{d3d12, d3dcommon};
 use winapi::Interface;
 
-use std::mem;
+use std::{mem, ptr};
 
 #[repr(transparent)]
 pub struct DescriptorRange(d3d12::D3D12_DESCRIPTOR_RANGE);
@@ -63,31 +63,35 @@ impl RootSignatureBuilder {
         desc.pParameters = self.parameters.as_ptr() as *const _;
         desc.Flags = flags;
 
-        let mut out_blob = Blob::null();
-        let mut error_blob = Blob::null();
-        let mut signature = ComPtr::<d3d12::ID3D12RootSignature>::null();
+        let mut out_blob: *mut d3dcommon::ID3DBlob = ptr::null_mut();
+        let mut error_blob: *mut d3dcommon::ID3DBlob = ptr::null_mut();
+        let mut signature: *mut d3d12::ID3D12RootSignature = ptr::null_mut();
         unsafe {
             if FAILED(d3d12::D3D12SerializeRootSignature(
                 &desc,
                 d3d12::D3D_ROOT_SIGNATURE_VERSION_1,
-                out_blob.as_mut_void() as *mut *mut _,
-                error_blob.as_mut_void() as *mut *mut _,
+                &mut out_blob as *mut *mut _ as *mut *mut _,
+                &mut error_blob as *mut *mut _ as *mut *mut _,
             )) {
                 panic!("Failed to serialize root signature.");
             }
 
-            if FAILED(device.CreateRootSignature(
+            if FAILED(device.native.CreateRootSignature(
                 0,
-                out_blob.GetBufferPointer(),
-                out_blob.GetBufferSize(),
+                (*out_blob).GetBufferPointer(),
+                (*out_blob).GetBufferSize(),
                 &d3d12::ID3D12RootSignature::uuidof(),
-                signature.as_mut_void(),
+                &mut signature as *mut *mut _ as *mut *mut _,
             )) {
+                (*out_blob).Release();
+                (*error_blob).Release();
                 panic!("Failed to create root signature");
             }
         }
+
         // TODO: Cache compiled root signatures
-        signature
+
+        RootSignature(unsafe { ComPtr::from_ptr(signature) })
     }
 }
 
@@ -99,4 +103,4 @@ impl Default for RootSignatureBuilder {
     }
 }
 
-pub type RootSignature = ComPtr<d3d12::ID3D12RootSignature>;
+pub struct RootSignature(pub(crate) ComPtr<d3d12::ID3D12RootSignature>);

@@ -25,7 +25,7 @@ pub struct Memory {
 
 impl Memory {
     pub fn new(device: &Device, type_: AllocationType, size: u64) -> Result<Self, Error> {
-        let mut resource = ComPtr::<d3d12::ID3D12Resource>::empty();
+        let mut resource: *mut d3d12::ID3D12Resource = ptr::null_mut();
         let resource_desc = d3d12::D3D12_RESOURCE_DESC {
             Alignment: 0,
             DepthOrArraySize: 1,
@@ -56,12 +56,12 @@ impl Memory {
                 d3d12::D3D12_RESOURCE_STATE_GENERIC_READ,
                 ptr::null(),
                 &d3d12::ID3D12Resource::uuidof(),
-                resource.as_mut_void(),
+                &mut resource as *mut *mut _ as *mut *mut _,
             );
             if SUCCEEDED(hr) {
                 Ok(Memory {
                     resource: GpuResource::create(
-                        resource,
+                        unsafe { ComPtr::from_ptr(resource) },
                         match type_ {
                             AllocationType::GpuOnly => d3d12::D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                             AllocationType::CpuWritable => d3d12::D3D12_RESOURCE_STATE_GENERIC_READ,
