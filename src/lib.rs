@@ -1,5 +1,3 @@
-#![feature(ptr_internals)]
-
 use winapi::shared::dxgiformat;
 use winapi::um::d3dcommon;
 
